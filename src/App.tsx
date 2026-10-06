@@ -76,6 +76,13 @@ function formatMoney(value: number | null) {
   return `${moneyFormatter.format(value)} ₽`;
 }
 
+function isoDateLocal(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 async function apiFetchJson(path: string, init: RequestInit = {}) {
   const response = await fetch(`${WORKER_URL}${path}`, {
     cache: "no-store",
@@ -169,16 +176,123 @@ async function fetchNomenclature() {
 
 async function fetchDashboard(from: string, to: string, warehouse: string) {
   const selectedStore =
-    LIVE_STORES.find((store) => store.name === warehouse) || LIVE_STORES[0];
+    warehouse === ALL_WAREHOUSES_LABEL
+      ? undefined
+      : LIVE_STORES.find((store) => store.name === warehouse);
 
   const params = new URLSearchParams({
     from,
     to,
-    scope: "store",
-    storeId: String(selectedStore.id),
+    scope: selectedStore ? "store" : "all",
   });
 
+  if (selectedStore) {
+    params.set("storeId", String(selectedStore.id));
+  }
+
   return apiFetchJson(`/api/dashboard?${params.toString()}`);
+}
+
+async function fetchTurnover(from: string, to: string, warehouse: string) {
+  const selectedStore =
+    warehouse === ALL_WAREHOUSES_LABEL
+      ? undefined
+      : LIVE_STORES.find((store) => store.name === warehouse);
+
+  if (selectedStore) {
+    const params = new URLSearchParams({
+      store: selectedStore.name,
+      from,
+      to,
+    });
+    const response = await fetch(`${WORKER_URL}/api/turnover?${params.toString()}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    return payload;
+  }
+
+  // Fetch all stores and merge
+  const payloads = await Promise.all(
+    LIVE_STORES.map(async (store) => {
+      const params = new URLSearchParams({
+        store: store.name,
+        from,
+        to,
+      });
+      const response = await fetch(`${WORKER_URL}/api/turnover?${params.toString()}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }),
+  );
+
+  const map = new Map();
+  const numericFields = [
+    "openQty",
+    "openAmt",
+    "purchaseQty",
+    "purchaseAmt",
+    "salesQty",
+    "salesAmt",
+    "transferQty",
+    "transferAmt",
+    "writeoffQty",
+    "writeoffAmt",
+    "inventoryQty",
+    "inventoryAmt",
+    "outgoingInvoiceQty",
+    "outgoingInvoiceAmt",
+    "productionQty",
+    "productionAmt",
+    "transformationQty",
+    "transformationAmt",
+    "returnedQty",
+    "returnedAmt",
+    "incomingReturnedQty",
+    "incomingReturnedAmt",
+    "disassembleQty",
+    "disassembleAmt",
+    "costCorrection",
+    "otherQty",
+    "otherAmt",
+    "closeQty",
+    "closeAmt",
+  ];
+
+  for (const payload of payloads) {
+    for (const row of payload.rows || []) {
+      const key = String(row.id || row.code || row.name || "");
+      if (!key) continue;
+
+      if (!map.has(key)) {
+        map.set(key, { ...row });
+        continue;
+      }
+
+      const target = map.get(key);
+      for (const field of numericFields) {
+        target[field] = Number(target[field] || 0) + Number(row[field] || 0);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    storeName: "Все склады",
+    period: { from, to },
+    rows: [...map.values()],
+  };
 }
 
 function Icon({ name }: { name: IconName }) {
@@ -507,18 +621,24 @@ function ProductCard({
   onToggle,
   showPrices,
   compact,
+  turnoverData,
 }: {
   product: StockApiItem;
   expanded: boolean;
   onToggle: () => void;
   showPrices: boolean;
   compact: boolean;
+  turnoverData?: any;
 }) {
   const start = product.startQuantity ?? 0;
   const end = product.quantity ?? 0;
   const delta = end - start;
   const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   const deltaLabel = `${deltaSign}${numberFormatter.format(Math.abs(delta))} ${product.unit}`.trim();
+
+  const turnover = turnoverData?.find((row: any) => String(row.id || row.code || row.name || "") === String(product.id || product.productNum || product.productName || ""));
+  const sales = Number(turnover?.salesQty || 0);
+  const purchase = Number(turnover?.purchaseQty || 0);
 
   return (
     <article className={`product-card ${expanded ? "is-expanded" : ""} ${compact ? "is-compact" : ""}`}>
@@ -559,20 +679,26 @@ function ProductCard({
       {expanded && (
         <div className="details">
           <div>
-            <span>Артикул</span>
-            <b>{product.productNum || "—"}</b>
-            <small />
-          </div>
-          <div>
             <span>Группа</span>
             <b>{product.group || "—"}</b>
             <small>{product.secondGroup || ""}</small>
           </div>
+          {purchase > 0 && (
+            <div>
+              <span>Приход за период</span>
+              <b>{formatQuantity(purchase, product.unit)}</b>
+            </div>
+          )}
+          {sales > 0 && (
+            <div>
+              <span>Продажи за период</span>
+              <b>{formatQuantity(sales, product.unit)}</b>
+            </div>
+          )}
           {showPrices && (
             <div>
               <span>Сумма на конец</span>
               <b>{formatMoney(product.endSum)}</b>
-              <small />
             </div>
           )}
         </div>
@@ -646,43 +772,69 @@ function NomenclaturePage({
       </section>
 
       <section className="recipe-list" aria-label="Номенклатура">
-        {visibleRecipes.map((recipe, index) => (
-          <article className={`recipe-card ${openRecipe === index ? "is-expanded" : ""}`} key={recipe.id || recipe.name || index}>
-            <button className="recipe-trigger" onClick={() => setOpenRecipe(openRecipe === index ? null : index)} type="button">
-              <span className="recipe-icon">
-                <Icon name="recipe" />
-              </span>
-              <span className="recipe-name">
-                <small>{recipe.category || "Номенклатура"}</small>
-                <strong>{recipe.name || recipe.productName || "Без названия"}</strong>
-              </span>
-              <span className="recipe-yield">
-                <small>Код</small>
-                <strong>{recipe.code || recipe.num || "—"}</strong>
-              </span>
-              <span className="recipe-cost">
-                <small>Цена</small>
-                <strong>{recipe.menuPrice ? `${moneyFormatter.format(recipe.menuPrice)} ₽` : "—"}</strong>
-              </span>
-              <span className="chevron">
-                <Icon name="chevron" />
-              </span>
-            </button>
-
-            {openRecipe === index && (
-              <div className="recipe-details">
-                <span>Позиция</span>
-                <div>
-                  <b>{recipe.type || "GOODS"}</b>
-                  <b>{recipe.unit || "шт"}</b>
-                </div>
-                <button type="button">
-                  Открыть карточку <span>→</span>
+        {visibleRecipes.length ? (
+          visibleRecipes.map((recipe, index) => {
+            const ingredients = recipe.ingredients || [];
+            return (
+              <article className={`recipe-card ${openRecipe === index ? "is-expanded" : ""}`} key={recipe.id || recipe.name || index}>
+                <button className="recipe-trigger" onClick={() => setOpenRecipe(openRecipe === index ? null : index)} type="button">
+                  <span className="recipe-icon">
+                    <Icon name="recipe" />
+                  </span>
+                  <span className="recipe-name">
+                    <small>{recipe.category || recipe.type || "Номенклатура"}</small>
+                    <strong>{recipe.name || recipe.productName || "Без названия"}</strong>
+                  </span>
+                  <span className="recipe-yield">
+                    <small>Выход</small>
+                    <strong>{recipe.unit || "шт"}</strong>
+                  </span>
+                  <span className="recipe-cost">
+                    <small>Цена</small>
+                    <strong>{recipe.menuPrice ? `${moneyFormatter.format(recipe.menuPrice)} ₽` : "—"}</strong>
+                  </span>
+                  <span className="chevron">
+                    <Icon name="chevron" />
+                  </span>
                 </button>
-              </div>
-            )}
-          </article>
-        ))}
+
+                {openRecipe === index && (
+                  <div className="recipe-details">
+                    {ingredients.length > 0 ? (
+                      <>
+                        <span>Состав · {ingredients.length} ингредиентов</span>
+                        <div>
+                          {ingredients.map((ing, idx) => (
+                            <b key={idx}>
+                              {ing.name || ing.productId || "Ингредиент"} — {ing.gross || ing.amount || 0}{" "}
+                              {ing.unit || ""}
+                            </b>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span>Информация</span>
+                        <div>
+                          <b>Себестоимость: {recipe.costPrice ? `${moneyFormatter.format(recipe.costPrice)} ₽` : "—"}</b>
+                          <b>Тип: {recipe.type || "GOODS"}</b>
+                        </div>
+                      </>
+                    )}
+                    <button type="button">
+                      Открыть карточку <span>→</span>
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })
+        ) : (
+          <div className="empty-state">
+            <strong>Ничего не найдено</strong>
+            <span>Измените поисковый запрос</span>
+          </div>
+        )}
       </section>
     </>
   );
@@ -702,6 +854,8 @@ function DocumentsPage({
   documents: any[];
 }) {
   const [filter, setFilter] = useState("Все");
+  const [expandedDoc, setExpandedDoc] = useState<number | null>(null);
+
   const filtered =
     filter === "Все"
       ? documents
@@ -755,39 +909,81 @@ function DocumentsPage({
           <small>{filtered.length} документов</small>
         </div>
 
-        {filtered.map((document, index) => (
-          <article className="document-card" key={document.id || document.number || index}>
-            <div className="document-mark">
-              <Icon name="document" />
-            </div>
+        {filtered.length ? (
+          filtered.map((document, index) => {
+            const items = document.items || [];
+            return (
+              <article key={document.id || document.number || index}>
+                <div className="document-card">
+                  <div className="document-mark">
+                    <Icon name="document" />
+                  </div>
 
-            <div className="document-main">
-              <small>
-                {document.number || "—"} ·{" "}
-                {document.dateIncoming
-                  ? new Date(document.dateIncoming).toLocaleDateString("ru-RU")
-                  : "—"}
-              </small>
-              <strong>{document.type || "Приходная накладная"}</strong>
-              <span>{document.counterparty || document.supplierName || "—"}</span>
-            </div>
+                  <div className="document-main">
+                    <small>
+                      {document.number || "—"} ·{" "}
+                      {document.dateIncoming
+                        ? new Date(document.dateIncoming).toLocaleDateString("ru-RU")
+                        : document.date
+                          ? new Date(document.date).toLocaleDateString("ru-RU")
+                          : "—"}
+                    </small>
+                    <strong>{document.type || "Приходная накладная"}</strong>
+                    <span>{document.counterparty || document.supplierName || "—"}</span>
+                  </div>
 
-            <div className="document-meta">
-              <strong>{formatMoney(document.sum || 0)}</strong>
-              <span className={`status ${document.status === "Черновик" ? "draft" : "positive"}`}>
-                {document.status || "Проведён"}
-              </span>
-            </div>
+                  <div className="document-meta">
+                    <strong>{formatMoney(document.sum || 0)}</strong>
+                    <span className={`status ${document.status === "Черновик" ? "draft" : "positive"}`}>
+                      {document.status || "Проведён"}
+                    </span>
+                  </div>
 
-            <button
-              aria-label={`Действия с документом ${document.number || index}`}
-              className="document-menu"
-              type="button"
-            >
-              <Icon name="dots" />
-            </button>
-          </article>
-        ))}
+                  <button
+                    aria-label={`Развернуть документ ${document.number || index}`}
+                    className="document-menu"
+                    type="button"
+                    onClick={() => setExpandedDoc(expandedDoc === index ? null : index)}
+                  >
+                    <Icon name={expandedDoc === index ? "chevron" : "dots"} />
+                  </button>
+                </div>
+
+                {expandedDoc === index && items.length > 0 && (
+                  <div className="document-detail">
+                    <div className="document-items-title">Позиции · {items.length}</div>
+                    <div className="document-items">
+                      {items.map((item, idx) => (
+                        <div className="document-item" key={idx}>
+                          <div className="document-item__name">
+                            <strong>{item.name || item.productId || "Позиция"}</strong>
+                            <span>{item.code || ""}</span>
+                          </div>
+                          <div className="document-item__qty">
+                            <strong>{numberFormatter.format(item.amount || 0)}</strong>
+                            <span>{item.unitName || "шт"}</span>
+                          </div>
+                          <div className="document-item__cost">
+                            <strong>{formatMoney(item.costPrice || 0)}</strong>
+                            <span>за единицу</span>
+                          </div>
+                          <div className="document-item__sum">
+                            {formatMoney((Number(item.amount || 0) * Number(item.costPrice || 0)) || 0)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </article>
+            );
+          })
+        ) : (
+          <div className="empty-state">
+            <strong>Документов не найдено</strong>
+            <span>Попробуйте изменить период или склад</span>
+          </div>
+        )}
       </section>
     </>
   );
@@ -808,6 +1004,9 @@ function AnalyticsPage({
 }) {
   const summary = dashboard?.summary || {};
   const stores = dashboard?.stores || [];
+  const topDecrease = dashboard?.topDecrease || [];
+  const topWriteoff = dashboard?.topWriteoff || [];
+  const topStock = dashboard?.topStock || [];
 
   return (
     <>
@@ -828,11 +1027,13 @@ function AnalyticsPage({
         <article>
           <span>Запасы сейчас</span>
           <strong>{formatMoney(summary.closeValue || 0)}</strong>
-          <small>{summary.storesCount || 0} склад(а)</small>
+          <small>{summary.storesCount || stores.length || 0} склад(а)</small>
         </article>
         <article>
           <span>Изменение запасов</span>
-          <strong>{summary.deltaValue ? `${summary.deltaValue > 0 ? "+" : ""}${formatMoney(summary.deltaValue)}` : "0 ₽"}</strong>
+          <strong>
+            {summary.deltaValue ? `${summary.deltaValue > 0 ? "+" : ""}${formatMoney(summary.deltaValue)}` : "0 ₽"}
+          </strong>
           <small>по себестоимости</small>
         </article>
         <article>
@@ -841,51 +1042,53 @@ function AnalyticsPage({
           <small>по себестоимости</small>
         </article>
         <article>
+          <span>Расход по продажам</span>
+          <strong>{formatMoney(Math.abs(Number(summary.salesCost || 0)))}</strong>
+          <small>по себестоимости</small>
+        </article>
+        <article>
           <span>Списания</span>
           <strong>{formatMoney(summary.writeoffCost || 0)}</strong>
           <small>по себестоимости</small>
         </article>
         <article>
-          <span>Отрицательные</span>
-          <strong>{summary.negativeCount || 0}</strong>
-          <small>позиций</small>
-        </article>
-        <article>
           <span>Проблем</span>
-          <strong>{(summary.negativeCount || 0) + (summary.ranOutCount || 0) + (summary.reconciliationCount || 0)}</strong>
+          <strong>{(summary.negativeCount || 0) + (summary.ranOutCount || 0)}</strong>
           <small>требуют внимания</small>
         </article>
       </section>
 
-      <section className="revenue-chart" aria-label="Данные по складам">
-        <div className="analytics-heading">
-          <div>
-            <span>Склады</span>
-            <strong>Стоимость запасов</strong>
+      {stores.length > 0 && (
+        <section className="revenue-chart" aria-label="Данные по складам">
+          <div className="analytics-heading">
+            <div>
+              <span>Склады</span>
+              <strong>Стоимость запасов</strong>
+            </div>
+            <b>{formatMoney(summary.closeValue || 0)}</b>
           </div>
-          <b>{formatMoney(summary.closeValue || 0)}</b>
-        </div>
 
-        <div className="chart-area">
-          {stores.map((store, index) => {
-            const maxValue = Math.max(
-              1,
-              ...stores.map((item) => Math.abs(Number(item.closeValue || 0))),
-            );
-            const width = Math.max(
-              10,
-              Math.min(100, (Math.abs(Number(store.closeValue || 0)) / maxValue) * 100),
-            );
+          <div className="chart-area">
+            {stores.map((store, index) => {
+              const maxValue = Math.max(
+                1,
+                ...stores.map((item) => Math.abs(Number(item.closeValue || 0))),
+              );
+              const width = Math.max(
+                10,
+                Math.min(100, (Math.abs(Number(store.closeValue || 0)) / maxValue) * 100),
+              );
 
-            return (
-              <div className="chart-column" key={store.name || index}>
-                <span className={`bar-${Math.min(100, Math.max(10, width))}`} />
-                <small>{store.name || "Склад"}</small>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              return (
+                <div className="chart-column" key={store.name || index}>
+                  <span className={`bar-${Math.min(100, Math.max(10, Math.round(width)))}`} />
+                  <small>{store.name || "Склад"}</small>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="analytics-grid">
         <section className="top-products" aria-label="Ключевые проблемы">
@@ -914,9 +1117,9 @@ function AnalyticsPage({
             <div>
               <b>3</b>
               <span>
-                <strong>Расхождения ОСВ</strong>
+                <strong>Продано за период</strong>
               </span>
-              <small>{summary.reconciliationCount || 0}</small>
+              <small>{formatMoney(summary.salesCost || 0)}</small>
             </div>
           </div>
         </section>
@@ -930,7 +1133,7 @@ function AnalyticsPage({
           </div>
 
           <div className="health-ring">
-            <strong>{Math.max(0, 100 - (summary.negativeCount || 0) * 10)}%</strong>
+            <strong>{Math.max(0, 100 - ((summary.negativeCount || 0) + (summary.ranOutCount || 0)) * 5)}%</strong>
             <span>в норме</span>
           </div>
 
@@ -938,7 +1141,7 @@ function AnalyticsPage({
             <div>
               <i className="healthy" />
               <span>В норме</span>
-              <b>{Math.max(0, 100 - (summary.negativeCount || 0) * 10)}</b>
+              <b>{Math.max(0, 100 - ((summary.negativeCount || 0) + (summary.ranOutCount || 0)) * 5)}</b>
             </div>
             <div>
               <i className="low" />
@@ -953,6 +1156,84 @@ function AnalyticsPage({
           </div>
         </section>
       </div>
+
+      {topDecrease.length > 0 && (
+        <section className="top-products" aria-label="Наибольшее снижение запасов">
+          <div className="analytics-heading">
+            <div>
+              <span>Наибольшее снижение запасов</span>
+              <strong>По себестоимости</strong>
+            </div>
+          </div>
+
+          <div className="product-ranking">
+            {topDecrease.slice(0, 5).map((item, idx) => (
+              <div key={idx}>
+                <b>{idx + 1}</b>
+                <span>
+                  <strong>{item.name || "Товар"}</strong>
+                  <i>
+                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
+                  </i>
+                </span>
+                <small>{formatMoney(item.rankValue || 0)}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {topWriteoff.length > 0 && (
+        <section className="top-products" aria-label="Больше всего списали">
+          <div className="analytics-heading">
+            <div>
+              <span>Больше всего списали</span>
+              <strong>По себестоимости</strong>
+            </div>
+          </div>
+
+          <div className="product-ranking">
+            {topWriteoff.slice(0, 5).map((item, idx) => (
+              <div key={idx}>
+                <b>{idx + 1}</b>
+                <span>
+                  <strong>{item.name || "Товар"}</strong>
+                  <i>
+                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
+                  </i>
+                </span>
+                <small>{formatMoney(item.rankValue || 0)}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {topStock.length > 0 && (
+        <section className="top-products" aria-label="Самые дорогие остатки">
+          <div className="analytics-heading">
+            <div>
+              <span>Самые дорогие остатки</span>
+              <strong>Стоимость</strong>
+            </div>
+          </div>
+
+          <div className="product-ranking">
+            {topStock.slice(0, 5).map((item, idx) => (
+              <div key={idx}>
+                <b>{idx + 1}</b>
+                <span>
+                  <strong>{item.name || "Товар"}</strong>
+                  <i>
+                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
+                  </i>
+                </span>
+                <small>{formatMoney(item.rankValue || 0)}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </>
   );
 }
@@ -1059,10 +1340,14 @@ export default function App() {
   const [warehouse, setWarehouse] = useState(ALL_WAREHOUSES_LABEL);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<number | null>(0);
+
+  // Дата подгружается сегодняшняя
+  const today = new Date();
   const [period, setPeriod] = useState<DateRange>({
-    start: new Date(2025, 4, 1),
-    end: new Date(2025, 4, 31),
+    start: today,
+    end: today,
   });
+
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [showPrices, setShowPrices] = useState(true);
   const [compactCards, setCompactCards] = useState(false);
@@ -1073,6 +1358,7 @@ export default function App() {
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [turnoverData, setTurnoverData] = useState<any[]>([]);
 
   const [documentsData, setDocumentsData] = useState<any[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -1117,6 +1403,21 @@ export default function App() {
   }, [activePage, warehouse, reloadToken]);
 
   useEffect(() => {
+    if (activePage !== "stock") return;
+
+    (async () => {
+      try {
+        const from = isoDateLocal(period.start);
+        const to = isoDateLocal(period.end);
+        const payload = await fetchTurnover(from, to, warehouse);
+        setTurnoverData(payload.rows || []);
+      } catch (error) {
+        console.error("Turnover error:", error);
+      }
+    })();
+  }, [activePage, warehouse, period.start, period.end]);
+
+  useEffect(() => {
     if (activePage !== "documents") return;
 
     (async () => {
@@ -1124,8 +1425,8 @@ export default function App() {
         setDocumentsLoading(true);
         setDocumentsError(null);
 
-        const from = period.start.toISOString().slice(0, 10);
-        const to = period.end.toISOString().slice(0, 10);
+        const from = isoDateLocal(period.start);
+        const to = isoDateLocal(period.end);
 
         const payload = await fetchDocumentsForPeriod(from, to, warehouse);
         setDocumentsData(payload.documents || payload.items || []);
@@ -1163,8 +1464,8 @@ export default function App() {
         setDashboardLoading(true);
         setDashboardError(null);
 
-        const from = period.start.toISOString().slice(0, 10);
-        const to = period.end.toISOString().slice(0, 10);
+        const from = isoDateLocal(period.start);
+        const to = isoDateLocal(period.end);
 
         const payload = await fetchDashboard(from, to, warehouse);
         setDashboardData(payload);
@@ -1362,6 +1663,7 @@ export default function App() {
                     product={product}
                     showPrices={showPrices}
                     compact={compactCards}
+                    turnoverData={turnoverData}
                   />
                 ))}
 
