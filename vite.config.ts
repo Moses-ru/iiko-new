@@ -8,7 +8,7 @@ import tailwindcss from "@tailwindcss/vite";
 // Если переименуете репозиторий — поменяйте base здесь же.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: "/iiko-miniapp-proxy/",
+  base: "/iiko-new/",
   build: {
     outDir: "dist",
   },
