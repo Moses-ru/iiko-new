@@ -54,6 +54,172 @@ body {
     #0f0f10;
 }
 
+/* =========================================================
+   DOCUMENT ITEMS
+   Позиции внутри приходной накладной
+   ========================================================= */
+
+.document-items-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  margin: 1rem 0 0.5rem;
+
+  color: var(--text-secondary);
+  font-size: 0.52rem;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.document-items {
+  display: grid;
+  gap: 0.35rem;
+}
+
+
+/* =========================================================
+   ОТДЕЛЬНАЯ ПОЗИЦИЯ
+   ========================================================= */
+
+.document-item {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) 0.7fr 0.9fr 1fr;
+  align-items: center;
+  gap: 0.75rem;
+
+  min-width: 0;
+  padding: 0.65rem 0.7rem;
+
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+
+  background: #ffffff03;
+
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.document-item:hover {
+  border-color: #4a4a4e;
+  background: #ffffff06;
+}
+
+
+/* =========================================================
+   НАЗВАНИЕ
+   ========================================================= */
+
+.document-item__name {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.document-item__name strong {
+  min-width: 0;
+  overflow: hidden;
+
+  color: var(--text);
+  font-size: 0.57rem;
+  font-weight: 500;
+  line-height: 1.45;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-item__name span {
+  overflow: hidden;
+
+  color: var(--text-muted);
+  font-size: 0.45rem;
+  line-height: 1.3;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   КОЛИЧЕСТВО
+   ========================================================= */
+
+.document-item__qty {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.document-item__qty strong {
+  color: var(--text);
+  font-family: "Unbounded:Medium", system-ui, sans-serif;
+  font-size: 0.57rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.document-item__qty span {
+  color: var(--text-muted);
+  font-size: 0.44rem;
+}
+
+
+/* =========================================================
+   ЦЕНА ЗА ЕДИНИЦУ
+   ========================================================= */
+
+.document-item__cost {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.document-item__cost strong {
+  color: var(--text);
+  font-family: "Unbounded:Medium", system-ui, sans-serif;
+  font-size: 0.54rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.document-item__cost span {
+  color: var(--text-muted);
+  font-size: 0.44rem;
+}
+
+
+/* =========================================================
+   ИТОГ ПО ПОЗИЦИИ
+   ========================================================= */
+
+.document-item__sum {
+  min-width: 0;
+
+  color: var(--text);
+  font-family: "Unbounded:Medium", system-ui, sans-serif;
+  font-size: 0.56rem;
+  font-weight: 500;
+
+  text-align: right;
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   DETAIL — ОБЩАЯ СТРУКТУРА
+   ========================================================= */
+
+.document-detail {
+  padding: 0 0.85rem 0.85rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+
+
+
 .auth-card {
   width: min(100%, 31rem);
   align-self: center;
@@ -2081,6 +2247,101 @@ button {
   color: var(--text-muted);
   cursor: not-allowed;
 }
+
+/* =========================================================
+   МОБИЛЬНАЯ ВЕРСИЯ
+   ========================================================= */
+
+@media (max-width: 700px) {
+  .document-detail {
+    padding: 0 0.7rem 0.7rem;
+  }
+
+  .document-items-title {
+    margin-top: 0.85rem;
+    margin-bottom: 0.45rem;
+
+    font-size: 0.48rem;
+  }
+
+  .document-items {
+    gap: 0.3rem;
+  }
+
+  .document-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.55rem;
+
+    padding: 0.6rem 0.65rem;
+    border-radius: 0.7rem;
+  }
+
+  .document-item__name {
+    grid-column: 1 / -1;
+  }
+
+  .document-item__qty,
+  .document-item__cost,
+  .document-item__sum {
+    align-self: center;
+  }
+
+  .document-item__qty {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+  }
+
+  .document-item__cost {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+  }
+
+  .document-item__name strong {
+    font-size: 0.54rem;
+  }
+
+  .document-item__qty strong {
+    font-size: 0.52rem;
+  }
+
+  .document-item__cost strong {
+    font-size: 0.49rem;
+  }
+
+  .document-item__sum {
+    font-size: 0.51rem;
+  }
+}
+
+
+/* =========================================================
+   ОЧЕНЬ УЗКИЙ ЭКРАН
+   ========================================================= */
+
+@media (max-width: 380px) {
+  .document-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .document-item__cost {
+    display: none;
+  }
+
+  .document-item__name {
+    grid-column: 1 / 2;
+  }
+
+  .document-item__qty {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .document-item__sum {
+    grid-column: 2;
+    grid-row: 2;
+  }
 
 @keyframes backdrop-in {
   from { opacity: 0; }
