@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import "./App.additions.css";
 
 type IconName =
   | "search"
@@ -63,17 +64,193 @@ type StockApiResponse = {
   items: StockApiItem[];
 };
 
+const TURNOVER_FIELDS = [
+  "openQty",
+  "openAmt",
+  "purchaseQty",
+  "purchaseAmt",
+  "salesQty",
+  "salesAmt",
+  "transferQty",
+  "transferAmt",
+  "writeoffQty",
+  "writeoffAmt",
+  "inventoryQty",
+  "inventoryAmt",
+  "outgoingInvoiceQty",
+  "outgoingInvoiceAmt",
+  "productionQty",
+  "productionAmt",
+  "transformationQty",
+  "transformationAmt",
+  "returnedQty",
+  "returnedAmt",
+  "incomingReturnedQty",
+  "incomingReturnedAmt",
+  "disassembleQty",
+  "disassembleAmt",
+  "costCorrection",
+  "otherQty",
+  "otherAmt",
+  "closeQty",
+  "closeAmt",
+] as const;
+
+type TurnoverField = (typeof TURNOVER_FIELDS)[number];
+
+type TurnoverRow = {
+  id?: string;
+  code?: string;
+  name?: string;
+  unit?: string;
+  category?: string;
+} & Partial<Record<TurnoverField, number>>;
+
+type TurnoverResponse = {
+  ok: boolean;
+  storeName: string;
+  period: { from: string; to: string };
+  rows: TurnoverRow[];
+};
+
+type IncomingStoreRef = { id?: string; name: string };
+
+type IncomingDocument = {
+  id: string;
+  number?: string;
+  invoiceIncomingNumber?: string;
+  date: string;
+  supplierId?: string;
+  supplierName?: string;
+  summary?: string;
+  stores?: IncomingStoreRef[];
+  sum: number;
+  hasDifference?: boolean;
+};
+
+type IncomingListResponse = {
+  ok: boolean;
+  documents: IncomingDocument[];
+  summary?: { sum?: number };
+};
+
+type IncomingItem = {
+  productId?: string;
+  productName?: string;
+  productNum?: string;
+  code?: string;
+  unit?: string;
+  amount?: number;
+  price?: number;
+  sum?: number;
+  ndsPercent?: number;
+};
+
+type IncomingDetail = {
+  id?: string;
+  number?: string;
+  date: string;
+  invoice?: string;
+  total?: number;
+  storeName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  status?: string;
+  items?: IncomingItem[];
+};
+
+type NomenclatureIngredient = {
+  productId?: string;
+  name?: unknown;
+  unit?: string;
+  amount?: number;
+  gross?: number;
+  net?: number;
+  out?: number;
+};
+
+type NomenclatureItem = {
+  id: string;
+  name?: unknown;
+  code?: string;
+  num?: string;
+  category?: string;
+  type?: string;
+  unit?: string;
+  menuPrice?: number;
+  costPrice?: number;
+  technology?: string;
+  recipeDateFrom?: string;
+  recipeDateTo?: string;
+  ingredients?: NomenclatureIngredient[];
+};
+
+type DashboardRow = {
+  name?: string;
+  storeName?: string;
+  productNum?: string;
+  unit?: string;
+  openQty?: number;
+  closeQty?: number;
+  closeAmt?: number;
+  writeoffQty?: number;
+  salesQty?: number;
+  rankValue?: number;
+};
+
+type DashboardData = {
+  summary?: Record<string, number>;
+  stores?: {
+    name?: string;
+    closeValue?: number;
+    deltaValue?: number;
+    negativeCount?: number;
+    ranOutCount?: number;
+  }[];
+  topDecrease?: DashboardRow[];
+  topWriteoff?: DashboardRow[];
+  topSalesUsage?: DashboardRow[];
+  topStock?: DashboardRow[];
+  negatives?: DashboardRow[];
+  ranOut?: DashboardRow[];
+  reconciliation?: DashboardRow[];
+  failedStores?: unknown[];
+  cache?: { cached?: boolean };
+  performance?: { totalMs?: number };
+};
+
+type RequestOptions = { signal?: AbortSignal; forceRefresh?: boolean };
+
 const numberFormatter = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 });
 const moneyFormatter = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+const priceFormatter = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function formatQuantity(value: number | null, unit: string) {
   if (value === null || Number.isNaN(value)) return `— ${unit}`.trim();
   return `${numberFormatter.format(value)} ${unit}`.trim();
 }
 
-function formatMoney(value: number | null) {
-  if (value === null || Number.isNaN(value)) return "—";
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return `${moneyFormatter.format(value)} ₽`;
+}
+
+function formatPrice(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${priceFormatter.format(value)} ₽`;
+}
+
+function formatSignedMoney(value: number | null | undefined) {
+  const n = Number(value || 0);
+  if (Math.abs(n) < 0.5) return "0 ₽";
+  return `${n > 0 ? "+" : "−"}${moneyFormatter.format(Math.abs(n))} ₽`;
+}
+
+function formatTime(value?: string) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
 function isoDateLocal(date: Date) {
@@ -83,48 +260,95 @@ function isoDateLocal(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
-async function apiFetchJson(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${WORKER_URL}${path}`, {
-    cache: "no-store",
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...(init.headers || {}),
-    },
-  });
+function isoDate(value: unknown) {
+  return String(value || "").slice(0, 10);
+}
+
+function daysBefore(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDocDate(value: unknown) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) return String(value || "").slice(0, 10) || "—";
+  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
+}
+
+function shortUuid(value: unknown) {
+  const text = String(value || "");
+  return text ? `${text.slice(0, 8)}…${text.slice(-4)}` : "—";
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Низкоуровневый запрос к воркеру (токен и подключение — из storage)  */
+/* ------------------------------------------------------------------ */
+
+const AUTH_TOKEN_KEY = "iiko-office-auth-v59";
+const CONNECTION_KEY = "iiko-office-connection-v59";
+
+function readStorage(key: string) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const token = readStorage(AUTH_TOKEN_KEY);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const connectionId = readStorage(CONNECTION_KEY);
+  if (connectionId) headers.set("X-Connection-ID", connectionId);
+
+  const response = await fetch(`${WORKER_URL}${path}`, { cache: "no-store", ...init, headers });
 
   const payload = await response.json().catch(() => ({
     ok: false,
     error: `HTTP ${response.status}`,
   }));
 
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || `HTTP ${response.status}`);
+  if (response.status === 401) {
+    throw new Error(payload?.error || "Сессия закончилась. Войдите снова.");
   }
 
-  return payload;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `HTTP ${response.status}`);
+  }
+
+  return payload as T;
 }
 
-async function fetchLiveStockForStore(storeName: string, signal?: AbortSignal): Promise<StockApiResponse> {
+function findStore(warehouse: string) {
+  return warehouse === ALL_WAREHOUSES_LABEL ? undefined : LIVE_STORES.find((store) => store.name === warehouse);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Остатки                                                            */
+/* ------------------------------------------------------------------ */
+
+async function fetchLiveStockForStore(storeName: string, options: RequestOptions = {}): Promise<StockApiResponse> {
   const params = new URLSearchParams({ store: storeName, q: "", limit: "5000", offset: "0" });
-  const response = await fetch(`${WORKER_URL}/api/stock-live?${params.toString()}`, {
-    cache: "no-store",
-    signal,
-    headers: { Accept: "application/json" },
-  });
-  const payload = (await response.json()) as StockApiResponse;
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || `HTTP ${response.status}`);
-  }
-  return payload;
+  if (options.forceRefresh) params.set("_", String(Date.now()));
+  return apiFetch<StockApiResponse>(`/api/stock-live?${params.toString()}`, { signal: options.signal });
 }
 
-async function fetchLiveStockMerged(signal?: AbortSignal): Promise<StockApiResponse> {
-  const payloads = await Promise.all(LIVE_STORES.map((store) => fetchLiveStockForStore(store.name, signal)));
+async function fetchLiveStockMerged(options: RequestOptions = {}): Promise<StockApiResponse> {
+  const payloads = await Promise.all(LIVE_STORES.map((store) => fetchLiveStockForStore(store.name, options)));
   const merged = new Map<string, StockApiItem>();
 
   for (const payload of payloads) {
-    for (const item of payload.items) {
+    for (const item of payload.items || []) {
       const key = String(item.id || item.productNum || item.productName || "");
       if (!key) continue;
 
@@ -132,20 +356,24 @@ async function fetchLiveStockMerged(signal?: AbortSignal): Promise<StockApiRespo
       if (!existing) {
         merged.set(key, {
           ...item,
-          quantity: item.quantity ?? 0,
-          startQuantity: item.startQuantity ?? 0,
-          endSum: item.endSum ?? 0,
+          quantity: Number(item.quantity || 0),
+          startQuantity: Number(item.startQuantity || 0),
+          endSum: Number(item.endSum || 0),
+          balanceStatus: "ok",
         });
       } else {
-        existing.quantity = (existing.quantity ?? 0) + (item.quantity ?? 0);
-        existing.startQuantity = (existing.startQuantity ?? 0) + (item.startQuantity ?? 0);
-        existing.endSum = (existing.endSum ?? 0) + (item.endSum ?? 0);
+        existing.quantity = (existing.quantity ?? 0) + Number(item.quantity || 0);
+        existing.startQuantity = (existing.startQuantity ?? 0) + Number(item.startQuantity || 0);
+        existing.endSum = (existing.endSum ?? 0) + Number(item.endSum || 0);
       }
     }
   }
 
   const items = [...merged.values()].sort((a, b) =>
-    a.productName.localeCompare(b.productName, "ru", { sensitivity: "base", numeric: true }),
+    String(a.productName || "").localeCompare(String(b.productName || ""), "ru", {
+      sensitivity: "base",
+      numeric: true,
+    }),
   );
 
   return {
@@ -157,142 +385,445 @@ async function fetchLiveStockMerged(signal?: AbortSignal): Promise<StockApiRespo
   };
 }
 
-async function fetchDocumentsForPeriod(from: string, to: string, warehouse: string) {
-  const selectedStore =
-    LIVE_STORES.find((store) => store.name === warehouse) || LIVE_STORES[0];
-
-  const params = new URLSearchParams({
-    from,
-    to,
-    storeId: String(selectedStore.id),
-  });
-
-  return apiFetchJson(`/api/documents/incoming?${params.toString()}`);
+function fetchLiveStock(warehouse: string, options: RequestOptions = {}) {
+  return warehouse === ALL_WAREHOUSES_LABEL
+    ? fetchLiveStockMerged(options)
+    : fetchLiveStockForStore(warehouse, options);
 }
 
-async function fetchNomenclature() {
-  return apiFetchJson("/api/nomenclature");
-}
+/* Кэш для мгновенного показа прошлых остатков, пока грузятся свежие */
+const STOCK_CACHE_PREFIX = "iiko-live-stock-ui-v45:";
 
-async function fetchDashboard(from: string, to: string, warehouse: string) {
-  const selectedStore =
-    warehouse === ALL_WAREHOUSES_LABEL
-      ? undefined
-      : LIVE_STORES.find((store) => store.name === warehouse);
+type StockCache = { time: string; items: StockApiItem[] };
 
-  const params = new URLSearchParams({
-    from,
-    to,
-    scope: selectedStore ? "store" : "all",
-  });
-
-  if (selectedStore) {
-    params.set("storeId", String(selectedStore.id));
+function readStockCache(warehouse: string): StockCache | null {
+  try {
+    const raw = localStorage.getItem(`${STOCK_CACHE_PREFIX}${warehouse}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.items)) return null;
+    return { time: String(parsed.time || ""), items: parsed.items };
+  } catch {
+    return null;
   }
-
-  return apiFetchJson(`/api/dashboard?${params.toString()}`);
 }
 
-async function fetchTurnover(from: string, to: string, warehouse: string) {
-  const selectedStore =
-    warehouse === ALL_WAREHOUSES_LABEL
-      ? undefined
-      : LIVE_STORES.find((store) => store.name === warehouse);
-
-  if (selectedStore) {
-    const params = new URLSearchParams({
-      store: selectedStore.name,
-      from,
-      to,
-    });
-    const response = await fetch(`${WORKER_URL}/api/turnover?${params.toString()}`, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-
-    const payload = await response.json();
-    if (!response.ok || payload.ok === false) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
-    }
-    return payload;
+function saveStockCache(warehouse: string, payload: StockApiResponse) {
+  try {
+    localStorage.setItem(
+      `${STOCK_CACHE_PREFIX}${warehouse}`,
+      JSON.stringify({ time: payload.time, items: payload.items }),
+    );
+  } catch {
+    // localStorage может быть недоступен или переполнен — это не критично
   }
+}
 
-  // Fetch all stores and merge
-  const payloads = await Promise.all(
-    LIVE_STORES.map(async (store) => {
-      const params = new URLSearchParams({
-        store: store.name,
-        from,
-        to,
-      });
-      const response = await fetch(`${WORKER_URL}/api/turnover?${params.toString()}`, {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      });
-      const payload = await response.json();
-      if (!response.ok || payload.ok === false) {
-        throw new Error(payload.error || `HTTP ${response.status}`);
-      }
-      return payload;
-    }),
-  );
+/* ------------------------------------------------------------------ */
+/*  ОСВ                                                                */
+/* ------------------------------------------------------------------ */
 
-  const map = new Map();
-  const numericFields = [
-    "openQty",
-    "openAmt",
-    "purchaseQty",
-    "purchaseAmt",
-    "salesQty",
-    "salesAmt",
-    "transferQty",
-    "transferAmt",
-    "writeoffQty",
-    "writeoffAmt",
-    "inventoryQty",
-    "inventoryAmt",
-    "outgoingInvoiceQty",
-    "outgoingInvoiceAmt",
-    "productionQty",
-    "productionAmt",
-    "transformationQty",
-    "transformationAmt",
-    "returnedQty",
-    "returnedAmt",
-    "incomingReturnedQty",
-    "incomingReturnedAmt",
-    "disassembleQty",
-    "disassembleAmt",
-    "costCorrection",
-    "otherQty",
-    "otherAmt",
-    "closeQty",
-    "closeAmt",
-  ];
+function mergeTurnoverRows(payloads: { rows?: TurnoverRow[] }[]): TurnoverRow[] {
+  const map = new Map<string, TurnoverRow>();
 
   for (const payload of payloads) {
     for (const row of payload.rows || []) {
       const key = String(row.id || row.code || row.name || "");
       if (!key) continue;
 
-      if (!map.has(key)) {
+      const target = map.get(key);
+      if (!target) {
         map.set(key, { ...row });
         continue;
       }
 
-      const target = map.get(key);
-      for (const field of numericFields) {
+      for (const field of TURNOVER_FIELDS) {
         target[field] = Number(target[field] || 0) + Number(row[field] || 0);
       }
     }
   }
 
+  return [...map.values()];
+}
+
+function fetchTurnoverForStore(storeName: string, from: string, to: string, options: RequestOptions = {}) {
+  const params = new URLSearchParams({ store: storeName, from, to });
+  if (options.forceRefresh) params.set("_", String(Date.now()));
+  return apiFetch<TurnoverResponse>(`/api/turnover?${params.toString()}`, { signal: options.signal });
+}
+
+async function fetchTurnover(
+  from: string,
+  to: string,
+  warehouse: string,
+  options: RequestOptions = {},
+): Promise<TurnoverResponse> {
+  const store = findStore(warehouse);
+  if (store) return fetchTurnoverForStore(store.name, from, to, options);
+
+  const payloads = await Promise.all(
+    LIVE_STORES.map((item) => fetchTurnoverForStore(item.name, from, to, options)),
+  );
+
   return {
     ok: true,
-    storeName: "Все склады",
+    storeName: ALL_WAREHOUSES_LABEL,
     period: { from, to },
-    rows: [...map.values()],
+    rows: mergeTurnoverRows(payloads),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Приходные накладные                                                */
+/* ------------------------------------------------------------------ */
+
+function fetchIncomingDocuments(from: string, to: string, warehouse: string, options: RequestOptions = {}) {
+  const params = new URLSearchParams({
+    from,
+    to,
+    storeId: findStore(warehouse)?.id || "__ALL__",
+  });
+  return apiFetch<IncomingListResponse>(`/api/documents/incoming?${params.toString()}`, {
+    signal: options.signal,
+  });
+}
+
+function fetchIncomingDocumentDetail(id: string, options: RequestOptions = {}) {
+  return apiFetch<{ ok: boolean; document: IncomingDetail }>(
+    `/api/documents/incoming/${encodeURIComponent(id)}`,
+    { signal: options.signal },
+  );
+}
+
+function fetchIncomingBatch(ids: string[], options: RequestOptions = {}) {
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  return apiFetch<{ ok: boolean; documents?: IncomingDetail[]; failed?: unknown[] }>(
+    `/api/documents/incoming-batch?${params.toString()}`,
+    { signal: options.signal },
+  );
+}
+
+/* Детали накладных пачками по 20 штук, две пачки параллельно */
+async function fetchDetailsInBatches(rows: { id: string }[], signal?: AbortSignal) {
+  const documents: IncomingDetail[] = [];
+  const failed: unknown[] = [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < rows.length; i += 20) {
+    chunks.push(rows.slice(i, i + 20).map((row) => row.id));
+  }
+
+  for (let i = 0; i < chunks.length; i += 2) {
+    const results = await Promise.all(
+      chunks.slice(i, i + 2).map(async (ids) => {
+        try {
+          return await fetchIncomingBatch(ids, { signal });
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          return { ok: false, documents: [], failed: ids };
+        }
+      }),
+    );
+
+    for (const result of results) {
+      documents.push(...(result.documents || []));
+      failed.push(...(result.failed || []));
+    }
+  }
+
+  return { documents, failed };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Аналитика закупочных цен                                           */
+/* ------------------------------------------------------------------ */
+
+type PurchaseLine = {
+  documentNumber: string;
+  date: string;
+  supplierId: string;
+  supplierName: string;
+  productId: string;
+  code: string;
+  name: string;
+  unit: string;
+  amount: number;
+  price: number;
+  sum: number;
+};
+
+type PriceProduct = {
+  name: string;
+  code: string;
+  unit: string;
+  lastPrice: number;
+  previousPrice: number | null;
+  changePct: number | null;
+  weightedAveragePrice: number | null;
+  minPrice: number;
+  maxPrice: number;
+  lastDate: string;
+  lastSupplierName: string;
+  purchaseValue: number;
+};
+
+type PriceAnalytics = { products: PriceProduct[]; failed: number };
+
+type MatrixSupplier = {
+  supplierId: string;
+  supplierName: string;
+  price: number;
+  date: string;
+  ageDays: number;
+  documentNumber: string;
+};
+
+type MatrixRow = {
+  name: string;
+  code: string;
+  unit: string;
+  suppliers: MatrixSupplier[];
+  supplierCount: number;
+  bestPrice: number | null;
+  bestSupplierName: string;
+};
+
+type SupplierMatrix = { rows: MatrixRow[]; asOf: string; from: string; supplierCount: number; failed: number };
+
+function purchaseLinesFromDocuments(documents: IncomingDetail[]): PurchaseLine[] {
+  const lines: PurchaseLine[] = [];
+
+  for (const doc of documents) {
+    for (const item of doc.items || []) {
+      lines.push({
+        documentNumber: String(doc.number || ""),
+        date: isoDate(doc.date),
+        supplierId: String(doc.supplierId || ""),
+        supplierName: doc.supplierName || `ID ${shortUuid(doc.supplierId)}`,
+        productId: String(item.productId || ""),
+        code: String(item.productNum || item.code || ""),
+        name: String(item.productName || item.productId || ""),
+        unit: item.unit || "—",
+        amount: Number(item.amount || 0),
+        price: Number(item.price || 0),
+        sum: Number(item.sum || 0),
+      });
+    }
+  }
+
+  return lines;
+}
+
+function lineSortKey(line: PurchaseLine) {
+  return `${line.date}|${line.documentNumber}`;
+}
+
+function buildPriceAnalytics(lines: PurchaseLine[], failed: number): PriceAnalytics {
+  const groups = new Map<string, PurchaseLine[]>();
+
+  for (const line of lines) {
+    const key = line.productId || line.code || line.name;
+    const group = groups.get(key);
+    if (group) group.push(line);
+    else groups.set(key, [line]);
+  }
+
+  const products: PriceProduct[] = [];
+
+  for (const rows of groups.values()) {
+    rows.sort((a, b) => lineSortKey(a).localeCompare(lineSortKey(b)));
+
+    const last = rows[rows.length - 1];
+    const previous = rows.length > 1 ? rows[rows.length - 2] : undefined;
+    const prices = rows.map((row) => row.price);
+    const quantity = rows.reduce((total, row) => total + Math.abs(row.amount), 0);
+    const absSum = rows.reduce((total, row) => total + Math.abs(row.sum), 0);
+
+    products.push({
+      name: last.name,
+      code: last.code,
+      unit: last.unit,
+      lastPrice: last.price,
+      previousPrice: previous ? previous.price : null,
+      changePct:
+        previous && Math.abs(previous.price) > 1e-9
+          ? ((last.price - previous.price) / previous.price) * 100
+          : null,
+      weightedAveragePrice: quantity ? absSum / quantity : null,
+      minPrice: Math.min(...prices),
+      maxPrice: Math.max(...prices),
+      lastDate: last.date,
+      lastSupplierName: last.supplierName,
+      purchaseValue: rows.reduce((total, row) => total + row.sum, 0),
+    });
+  }
+
+  products.sort((a, b) => b.purchaseValue - a.purchaseValue);
+  return { products, failed };
+}
+
+function buildSupplierMatrix(lines: PurchaseLine[], asOf: string, from: string, failed: number): SupplierMatrix {
+  // Последняя цена каждого поставщика по каждому товару в окне [from; asOf]
+  const latest = new Map<string, PurchaseLine>();
+
+  for (const line of lines) {
+    if (line.date > asOf || line.date < from || !line.supplierId) continue;
+
+    const key = `${line.productId || line.code || line.name}|${line.supplierId}`;
+    const current = latest.get(key);
+    if (!current || lineSortKey(line) > lineSortKey(current)) latest.set(key, line);
+  }
+
+  const products = new Map<string, { name: string; code: string; unit: string; suppliers: MatrixSupplier[] }>();
+
+  for (const line of latest.values()) {
+    const key = line.productId || line.code || line.name;
+    let product = products.get(key);
+    if (!product) {
+      product = { name: line.name, code: line.code, unit: line.unit, suppliers: [] };
+      products.set(key, product);
+    }
+
+    const ageDays = Math.max(
+      0,
+      Math.floor((new Date(`${asOf}T00:00:00Z`).getTime() - new Date(`${line.date}T00:00:00Z`).getTime()) / 86400000),
+    );
+
+    product.suppliers.push({
+      supplierId: line.supplierId,
+      supplierName: line.supplierName,
+      price: line.price,
+      date: line.date,
+      ageDays,
+      documentNumber: line.documentNumber,
+    });
+  }
+
+  const rows: MatrixRow[] = [...products.values()]
+    .map((product) => {
+      product.suppliers.sort((a, b) => a.price - b.price);
+      return {
+        ...product,
+        supplierCount: product.suppliers.length,
+        bestPrice: product.suppliers[0]?.price ?? null,
+        bestSupplierName: product.suppliers[0]?.supplierName || "",
+      };
+    })
+    .sort((a, b) => b.supplierCount - a.supplierCount || a.name.localeCompare(b.name, "ru"));
+
+  return {
+    rows,
+    asOf,
+    from,
+    supplierCount: new Set(lines.map((line) => line.supplierId).filter(Boolean)).size,
+    failed,
+  };
+}
+
+async function fetchPriceAnalytics(documents: IncomingDocument[], signal?: AbortSignal): Promise<PriceAnalytics> {
+  const details = await fetchDetailsInBatches(documents, signal);
+  return buildPriceAnalytics(purchaseLinesFromDocuments(details.documents), details.failed.length);
+}
+
+async function fetchSupplierMatrix(
+  to: string,
+  warehouse: string,
+  historyDays: number,
+  signal?: AbortSignal,
+): Promise<SupplierMatrix> {
+  const from = daysBefore(to, historyDays);
+  const list = await fetchIncomingDocuments(from, to, warehouse, { signal });
+  const details = await fetchDetailsInBatches(list.documents || [], signal);
+  return buildSupplierMatrix(purchaseLinesFromDocuments(details.documents), to, from, details.failed.length);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Номенклатура и техкарты                                            */
+/* ------------------------------------------------------------------ */
+
+async function fetchNomenclature(options: RequestOptions = {}): Promise<NomenclatureItem[]> {
+  const suffix = options.forceRefresh ? "?refresh=1" : "";
+  const payload = await apiFetch<{ items?: NomenclatureItem[]; dishes?: NomenclatureItem[] }>(
+    `/api/nomenclature${suffix}`,
+    { signal: options.signal },
+  );
+  return payload.items || payload.dishes || [];
+}
+
+async function fetchNomenclatureDetail(productId: string, options: RequestOptions = {}): Promise<NomenclatureItem> {
+  const payload = await apiFetch<{ item: NomenclatureItem }>(
+    `/api/nomenclature/${encodeURIComponent(productId)}`,
+    { signal: options.signal },
+  );
+  return payload.item;
+}
+
+function displayText(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "string" || typeof value === "number") return String(value);
+
+  if (typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const candidate = source.name ?? source.displayName ?? source.title ?? source.value ?? source.text ?? source.code;
+    if (candidate !== "" && candidate !== null && candidate !== undefined) return String(candidate);
+  }
+
+  return fallback || String(value);
+}
+
+/* Количества в техкарте приходят в основной единице: кг → г, л → мл */
+function recipeMeasure(value: unknown, unit?: string) {
+  const n = Number(value ?? 0);
+  const rawUnit = String(unit || "").trim();
+  const u = rawUnit.toLocaleLowerCase("ru-RU").replace(/\./g, "").replace(/\s+/g, " ").trim();
+
+  if (!Number.isFinite(n)) return `${displayText(value, "0")} ${rawUnit}`.trim();
+
+  if (["кг", "kg", "килограмм", "килограммы"].includes(u)) return `${numberFormatter.format(n * 1000)} г`;
+  if (["л", "l", "литр", "литры", "литров"].includes(u)) return `${numberFormatter.format(n * 1000)} мл`;
+  if (["г", "гр", "g", "грамм", "граммы"].includes(u)) return `${numberFormatter.format(n)} г`;
+  if (["мл", "ml", "миллилитр", "миллилитры"].includes(u)) return `${numberFormatter.format(n)} мл`;
+  if (["шт", "штука", "штуки", "pcs", "pc"].includes(u)) return `${numberFormatter.format(n)} шт`;
+  if (["порц", "порция", "порции"].includes(u)) return `${numberFormatter.format(n)} порц`;
+
+  return `${numberFormatter.format(n)}${rawUnit ? ` ${rawUnit}` : ""}`;
+}
+
+function shortRecipeDate(value: unknown) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return text || "—";
+  if (Number(match[1]) >= 2100) return "Бессрочно";
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function ruProductType(type: unknown) {
+  const value = String(type || "").toUpperCase();
+  if (value === "DISH") return "Блюдо";
+  if (value === "GOODS") return "Товар";
+  if (value === "PREPARED") return "Полуфабрикат";
+  return String(type || "") || "Номенклатура";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Дашборд                                                            */
+/* ------------------------------------------------------------------ */
+
+function fetchDashboard(from: string, to: string, warehouse: string, options: RequestOptions = {}) {
+  const store = findStore(warehouse);
+  const params = new URLSearchParams({ from, to, scope: store ? "store" : "all" });
+
+  if (store) params.set("storeId", String(store.id));
+  if (options.forceRefresh) params.set("_", String(Date.now()));
+
+  return apiFetch<DashboardData & { ok: boolean }>(`/api/dashboard?${params.toString()}`, {
+    signal: options.signal,
+  });
+}
+
+function sharePercent(value: number | undefined, max: number) {
+  if (!max) return 10;
+  return Math.min(100, Math.max(10, Math.round((Math.abs(Number(value || 0)) / max) * 100)));
 }
 
 function Icon({ name }: { name: IconName }) {
@@ -615,20 +1146,34 @@ function WorkspaceActions({
   );
 }
 
+const MOVEMENT_LINES: { label: string; field: TurnoverField; absolute: boolean }[] = [
+  { label: "Приход за период", field: "purchaseQty", absolute: true },
+  { label: "Продажи за период", field: "salesQty", absolute: true },
+  { label: "Списания за период", field: "writeoffQty", absolute: true },
+  { label: "Перемещения", field: "transferQty", absolute: false },
+  { label: "Инвентаризация", field: "inventoryQty", absolute: false },
+  { label: "Производство", field: "productionQty", absolute: false },
+  { label: "Преобразование", field: "transformationQty", absolute: false },
+  { label: "Расходные накладные", field: "outgoingInvoiceQty", absolute: true },
+  { label: "Возвраты", field: "returnedQty", absolute: true },
+  { label: "Возврат прихода", field: "incomingReturnedQty", absolute: true },
+  { label: "Разборка", field: "disassembleQty", absolute: false },
+];
+
 function ProductCard({
   product,
   expanded,
   onToggle,
   showPrices,
   compact,
-  turnoverData,
+  turnover,
 }: {
   product: StockApiItem;
   expanded: boolean;
   onToggle: () => void;
   showPrices: boolean;
   compact: boolean;
-  turnoverData?: any;
+  turnover?: TurnoverRow;
 }) {
   const start = product.startQuantity ?? 0;
   const end = product.quantity ?? 0;
@@ -636,9 +1181,12 @@ function ProductCard({
   const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   const deltaLabel = `${deltaSign}${numberFormatter.format(Math.abs(delta))} ${product.unit}`.trim();
 
-  const turnover = turnoverData?.find((row: any) => String(row.id || row.code || row.name || "") === String(product.id || product.productNum || product.productName || ""));
-  const sales = Number(turnover?.salesQty || 0);
-  const purchase = Number(turnover?.purchaseQty || 0);
+  const movements = expanded
+    ? MOVEMENT_LINES.map((line) => {
+        const raw = Number(turnover?.[line.field] || 0);
+        return { ...line, value: line.absolute ? Math.abs(raw) : raw };
+      }).filter((line) => Math.abs(line.value) > 0.000001)
+    : [];
 
   return (
     <article className={`product-card ${expanded ? "is-expanded" : ""} ${compact ? "is-compact" : ""}`}>
@@ -683,18 +1231,21 @@ function ProductCard({
             <b>{product.group || "—"}</b>
             <small>{product.secondGroup || ""}</small>
           </div>
-          {purchase > 0 && (
+          {product.productNum && (
             <div>
-              <span>Приход за период</span>
-              <b>{formatQuantity(purchase, product.unit)}</b>
+              <span>Артикул</span>
+              <b>{product.productNum}</b>
             </div>
           )}
-          {sales > 0 && (
-            <div>
-              <span>Продажи за период</span>
-              <b>{formatQuantity(sales, product.unit)}</b>
+          {movements.map((line) => (
+            <div key={line.field}>
+              <span>{line.label}</span>
+              <b>
+                {!line.absolute && line.value > 0 ? "+" : ""}
+                {formatQuantity(line.value, product.unit)}
+              </b>
             </div>
-          )}
+          ))}
           {showPrices && (
             <div>
               <span>Сумма на конец</span>
@@ -707,21 +1258,72 @@ function ProductCard({
   );
 }
 
+const NOMENCLATURE_FILTERS: [string, string][] = [
+  ["all", "Все"],
+  ["DISH", "Блюда"],
+  ["GOODS", "Товары"],
+  ["PREPARED", "Полуфабрикаты"],
+];
+
+const NOMENCLATURE_RENDER_LIMIT = 300;
+
+type NomenclatureDetailState = { loading?: boolean; error?: string; item?: NomenclatureItem };
+
 function NomenclaturePage({
-  warehouse,
-  onWarehouseChange,
   recipes,
+  loading,
+  error,
+  reloadToken,
 }: {
-  warehouse: string;
-  onWarehouseChange: (warehouse: string) => void;
-  recipes: any[];
+  recipes: NomenclatureItem[];
+  loading: boolean;
+  error: string | null;
+  reloadToken: number;
 }) {
   const [query, setQuery] = useState("");
-  const [openRecipe, setOpenRecipe] = useState<number | null>(0);
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, NomenclatureDetailState>>({});
 
-  const visibleRecipes = (recipes || []).filter((recipe) =>
-    String(recipe.name || recipe.productName || "").toLocaleLowerCase("ru-RU").includes(query.toLocaleLowerCase("ru-RU")),
-  );
+  // После ручного обновления карточки подгружаются заново
+  useEffect(() => {
+    setDetails({});
+    setOpenId(null);
+  }, [reloadToken]);
+
+  const visibleRecipes = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("ru-RU");
+
+    return recipes
+      .filter((item) => {
+        if (typeFilter !== "all" && item.type !== typeFilter) return false;
+        if (!q) return true;
+
+        return [displayText(item.name), item.code, item.num, item.category, ruProductType(item.type)].some((value) =>
+          String(value || "")
+            .toLocaleLowerCase("ru-RU")
+            .includes(q),
+        );
+      })
+      .sort((a, b) => displayText(a.name).localeCompare(displayText(b.name), "ru"));
+  }, [recipes, query, typeFilter]);
+
+  const toggleRecipe = (id: string) => {
+    if (openId === id) {
+      setOpenId(null);
+      return;
+    }
+
+    setOpenId(id);
+    if (details[id]?.item) return;
+
+    setDetails((prev) => ({ ...prev, [id]: { loading: true } }));
+    fetchNomenclatureDetail(id)
+      .then((item) => setDetails((prev) => ({ ...prev, [id]: { item } })))
+      .catch((err: unknown) => setDetails((prev) => ({ ...prev, [id]: { error: errorMessage(err) } })));
+  };
+
+  const showList = !error && !(loading && recipes.length === 0);
 
   return (
     <>
@@ -736,15 +1338,13 @@ function NomenclaturePage({
         </button>
       </header>
 
-      <WorkspaceActions warehouse={warehouse} onWarehouseChange={onWarehouseChange} />
-
       <section className="toolbar page-toolbar" aria-label="Поиск рецептов">
         <label className="search-field">
           <Icon name="search" />
           <input
             aria-label="Поиск по номенклатуре"
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Найти позицию"
+            placeholder="Блюдо, товар, код, категория"
             value={query}
           />
           {query && (
@@ -753,8 +1353,21 @@ function NomenclaturePage({
             </button>
           )}
         </label>
-        <span className="results-count">{visibleRecipes.length} позиций</span>
+        <span className="results-count">{loading ? "Загрузка…" : `${visibleRecipes.length} позиций`}</span>
       </section>
+
+      <div className="filter-chips" role="group" aria-label="Тип номенклатуры">
+        {NOMENCLATURE_FILTERS.map(([value, label]) => (
+          <button
+            className={typeFilter === value ? "active" : ""}
+            key={value}
+            onClick={() => setTypeFilter(value)}
+            type="button"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <section className="catalog-stats" aria-label="Сводка по номенклатуре">
         <div>
@@ -763,80 +1376,168 @@ function NomenclaturePage({
         </div>
         <div>
           <span>Блюд</span>
-          <strong>{(recipes || []).filter((x) => x.type === "DISH").length}</strong>
+          <strong>{recipes.filter((x) => x.type === "DISH").length}</strong>
         </div>
         <div>
           <span>Товаров</span>
-          <strong>{(recipes || []).filter((x) => x.type === "GOODS").length}</strong>
+          <strong>{recipes.filter((x) => x.type === "GOODS").length}</strong>
         </div>
       </section>
 
-      <section className="recipe-list" aria-label="Номенклатура">
-        {visibleRecipes.length ? (
-          visibleRecipes.map((recipe, index) => {
-            const ingredients = recipe.ingredients || [];
-            return (
-              <article className={`recipe-card ${openRecipe === index ? "is-expanded" : ""}`} key={recipe.id || recipe.name || index}>
-                <button className="recipe-trigger" onClick={() => setOpenRecipe(openRecipe === index ? null : index)} type="button">
-                  <span className="recipe-icon">
-                    <Icon name="recipe" />
-                  </span>
-                  <span className="recipe-name">
-                    <small>{recipe.category || recipe.type || "Номенклатура"}</small>
-                    <strong>{recipe.name || recipe.productName || "Без названия"}</strong>
-                  </span>
-                  <span className="recipe-yield">
-                    <small>Выход</small>
-                    <strong>{recipe.unit || "шт"}</strong>
-                  </span>
-                  <span className="recipe-cost">
-                    <small>Цена</small>
-                    <strong>{recipe.menuPrice ? `${moneyFormatter.format(recipe.menuPrice)} ₽` : "—"}</strong>
-                  </span>
-                  <span className="chevron">
-                    <Icon name="chevron" />
-                  </span>
-                </button>
+      {loading && recipes.length === 0 && (
+        <div className="empty-state">
+          <strong>Загрузка номенклатуры…</strong>
+        </div>
+      )}
 
-                {openRecipe === index && (
-                  <div className="recipe-details">
-                    {ingredients.length > 0 ? (
-                      <>
-                        <span>Состав · {ingredients.length} ингредиентов</span>
-                        <div>
-                          {ingredients.map((ing, idx) => (
-                            <b key={idx}>
-                              {ing.name || ing.productId || "Ингредиент"} — {ing.gross || ing.amount || 0}{" "}
-                              {ing.unit || ""}
-                            </b>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <span>Информация</span>
-                        <div>
-                          <b>Себестоимость: {recipe.costPrice ? `${moneyFormatter.format(recipe.costPrice)} ₽` : "—"}</b>
-                          <b>Тип: {recipe.type || "GOODS"}</b>
-                        </div>
-                      </>
-                    )}
-                    <button type="button">
-                      Открыть карточку <span>→</span>
+      {error && (
+        <div className="empty-state" role="alert">
+          <strong>Не удалось загрузить номенклатуру</strong>
+          <span>{error}</span>
+        </div>
+      )}
+
+      {showList && (
+        <section className="recipe-list" aria-label="Номенклатура">
+          {visibleRecipes.length ? (
+            <>
+              {visibleRecipes.slice(0, NOMENCLATURE_RENDER_LIMIT).map((recipe) => {
+                const isOpen = openId === recipe.id;
+                const state = details[recipe.id];
+                const full: NomenclatureItem = { ...recipe, ...(state?.item || {}) };
+                const ingredients = full.ingredients || [];
+                const isGoods = full.type === "GOODS";
+
+                return (
+                  <article className={`recipe-card ${isOpen ? "is-expanded" : ""}`} key={recipe.id}>
+                    <button className="recipe-trigger" onClick={() => toggleRecipe(recipe.id)} type="button">
+                      <span className="recipe-icon">
+                        <Icon name="recipe" />
+                      </span>
+                      <span className="recipe-name">
+                        <small>{recipe.category || ruProductType(recipe.type)}</small>
+                        <strong>{displayText(recipe.name, "Без названия")}</strong>
+                      </span>
+                      <span className="recipe-yield">
+                        <small>Выход</small>
+                        <strong>{recipe.unit || "шт"}</strong>
+                      </span>
+                      <span className="recipe-cost">
+                        <small>Цена</small>
+                        <strong>{recipe.menuPrice ? formatPrice(recipe.menuPrice) : "—"}</strong>
+                      </span>
+                      <span className="chevron">
+                        <Icon name="chevron" />
+                      </span>
                     </button>
-                  </div>
-                )}
-              </article>
-            );
-          })
-        ) : (
-          <div className="empty-state">
-            <strong>Ничего не найдено</strong>
-            <span>Измените поисковый запрос</span>
-          </div>
-        )}
-      </section>
+
+                    {isOpen && (
+                      <div className="recipe-details">
+                        {state?.loading && <span>Открываем техкарту…</span>}
+                        {state?.error && <span>{state.error}</span>}
+
+                        {state?.item && (
+                          <>
+                            <span>Информация · {ruProductType(full.type)}</span>
+                            <div>
+                              <b>
+                                Себестоимость:{" "}
+                                {Number.isFinite(Number(full.costPrice)) && full.costPrice !== undefined
+                                  ? formatPrice(Number(full.costPrice))
+                                  : "—"}
+                              </b>
+                              {full.menuPrice ? <b>Цена меню: {formatPrice(full.menuPrice)}</b> : null}
+                              {(full.recipeDateFrom || full.recipeDateTo) && (
+                                <b>
+                                  Техкарта: {shortRecipeDate(full.recipeDateFrom)} — {shortRecipeDate(full.recipeDateTo)}
+                                </b>
+                              )}
+                            </div>
+
+                            {ingredients.length > 0 ? (
+                              <>
+                                <span>Состав · {ingredients.length} ингредиентов</span>
+                                <div>
+                                  {ingredients.map((ing, idx) => (
+                                    <b key={`${ing.productId || "ing"}-${idx}`}>
+                                      {displayText(ing.name, ing.productId || "Ингредиент")} — брутто{" "}
+                                      {recipeMeasure(ing.gross ?? ing.amount ?? 0, ing.unit)} · нетто{" "}
+                                      {recipeMeasure(ing.net ?? 0, ing.unit)} · выход{" "}
+                                      {recipeMeasure(ing.out ?? 0, ing.unit)}
+                                    </b>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <span>{isGoods ? "Техкарта не требуется" : "Состав не найден"}</span>
+                                <div>
+                                  <b>
+                                    {isGoods
+                                      ? "Это товар: показываются карточка номенклатуры и себестоимость."
+                                      : "iikoOffice не вернул строки действующей техкарты."}
+                                  </b>
+                                </div>
+                              </>
+                            )}
+
+                            {full.technology && (
+                              <>
+                                <span>Технология приготовления</span>
+                                <div>
+                                  <b className="x-pre-line">{full.technology}</b>
+                                </div>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+
+              {visibleRecipes.length > NOMENCLATURE_RENDER_LIMIT && (
+                <div className="x-note">
+                  Показаны первые {NOMENCLATURE_RENDER_LIMIT} позиций из {visibleRecipes.length}. Используйте поиск или
+                  фильтр по типу.
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="empty-state">
+              <strong>Ничего не найдено</strong>
+              <span>Измените поиск или тип номенклатуры</span>
+            </div>
+          )}
+        </section>
+      )}
     </>
+  );
+}
+
+type DocumentsTab = "documents" | "overview" | "prices" | "suppliers" | "matrix";
+
+const DOCUMENT_TABS: [DocumentsTab, string][] = [
+  ["documents", "Приходные"],
+  ["overview", "Обзор"],
+  ["prices", "Цены"],
+  ["suppliers", "Поставщики"],
+  ["matrix", "Матрица"],
+];
+
+const MATRIX_HISTORY_DAYS = 7;
+const ANALYTICS_RENDER_LIMIT = 200;
+
+type AsyncState<T> = { key: string; loading: boolean; data?: T; error?: string };
+type DocumentDetailState = { loading?: boolean; error?: string; doc?: IncomingDetail };
+
+function matchesText(query: string, ...values: unknown[]) {
+  if (!query) return true;
+  return values.some((value) =>
+    String(value ?? "")
+      .toLocaleLowerCase("ru-RU")
+      .includes(query),
   );
 }
 
@@ -845,21 +1546,475 @@ function DocumentsPage({
   onWarehouseChange,
   period,
   onOpenCalendar,
-  documents,
+  data,
+  loading,
+  error,
+  reloadToken,
 }: {
   warehouse: string;
   onWarehouseChange: (warehouse: string) => void;
   period: DateRange;
   onOpenCalendar: () => void;
-  documents: any[];
+  data: IncomingListResponse | null;
+  loading: boolean;
+  error: string | null;
+  reloadToken: number;
 }) {
-  const [filter, setFilter] = useState("Все");
-  const [expandedDoc, setExpandedDoc] = useState<number | null>(null);
+  const [tab, setTab] = useState<DocumentsTab>("documents");
+  const [query, setQuery] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, DocumentDetailState>>({});
+  const [prices, setPrices] = useState<AsyncState<PriceAnalytics> | null>(null);
+  const [matrix, setMatrix] = useState<AsyncState<SupplierMatrix> | null>(null);
+  const requested = useRef({ prices: "", matrix: "" });
 
-  const filtered =
-    filter === "Все"
-      ? documents
-      : documents.filter((document) => String(document.type || "").includes(filter));
+  const from = isoDateLocal(period.start);
+  const to = isoDateLocal(period.end);
+  const analyticsKey = `${from}|${to}|${warehouse}|${reloadToken}`;
+
+  useEffect(() => {
+    setDetails({});
+    setExpandedId(null);
+  }, [reloadToken]);
+
+  // Цены считаются по деталям всех накладных периода — грузим только когда открыта вкладка
+  useEffect(() => {
+    if (tab !== "prices" || !data) return;
+    if (requested.current.prices === analyticsKey) return;
+
+    requested.current.prices = analyticsKey;
+    setPrices({ key: analyticsKey, loading: true });
+
+    const controller = new AbortController();
+    let finished = false;
+
+    fetchPriceAnalytics(data.documents || [], controller.signal)
+      .then((result) => {
+        finished = true;
+        setPrices({ key: analyticsKey, loading: false, data: result });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        finished = true;
+        setPrices({ key: analyticsKey, loading: false, error: errorMessage(err) });
+      });
+
+    return () => {
+      if (!finished) {
+        controller.abort();
+        requested.current.prices = "";
+      }
+    };
+  }, [tab, data, analyticsKey]);
+
+  useEffect(() => {
+    if (tab !== "matrix") return;
+    if (requested.current.matrix === analyticsKey) return;
+
+    requested.current.matrix = analyticsKey;
+    setMatrix({ key: analyticsKey, loading: true });
+
+    const controller = new AbortController();
+    let finished = false;
+
+    fetchSupplierMatrix(to, warehouse, MATRIX_HISTORY_DAYS, controller.signal)
+      .then((result) => {
+        finished = true;
+        setMatrix({ key: analyticsKey, loading: false, data: result });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        finished = true;
+        setMatrix({ key: analyticsKey, loading: false, error: errorMessage(err) });
+      });
+
+    return () => {
+      if (!finished) {
+        controller.abort();
+        requested.current.matrix = "";
+      }
+    };
+  }, [tab, analyticsKey, to, warehouse]);
+
+  const q = query.trim().toLocaleLowerCase("ru-RU");
+
+  const rows = useMemo(
+    () =>
+      (data?.documents || []).filter((doc) =>
+        matchesText(
+          q,
+          doc.number,
+          doc.invoiceIncomingNumber,
+          doc.supplierName,
+          doc.summary,
+          ...(doc.stores || []).map((store) => store.name),
+        ),
+      ),
+    [data, q],
+  );
+
+  const totalSum = useMemo(() => rows.reduce((sum, doc) => sum + (Number(doc.sum) || 0), 0), [rows]);
+
+  const suppliers = useMemo(() => {
+    const map = new Map<string, { name: string; sum: number; count: number }>();
+
+    for (const doc of rows) {
+      if (!doc.supplierId) continue;
+      const entry = map.get(doc.supplierId) || {
+        name: doc.supplierName || `ID ${shortUuid(doc.supplierId)}`,
+        sum: 0,
+        count: 0,
+      };
+      entry.sum += Number(doc.sum) || 0;
+      entry.count += 1;
+      map.set(doc.supplierId, entry);
+    }
+
+    return [...map.entries()].map(([id, entry]) => ({ id, ...entry })).sort((a, b) => b.sum - a.sum);
+  }, [rows]);
+
+  const toggleDocument = (id: string) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+
+    setExpandedId(id);
+    if (details[id]?.doc) return;
+
+    setDetails((prev) => ({ ...prev, [id]: { loading: true } }));
+    fetchIncomingDocumentDetail(id)
+      .then((payload) => setDetails((prev) => ({ ...prev, [id]: { doc: payload.document } })))
+      .catch((err: unknown) => setDetails((prev) => ({ ...prev, [id]: { error: errorMessage(err) } })));
+  };
+
+  const renderDocumentList = () => {
+    if (!rows.length) {
+      return (
+        <div className="empty-state">
+          <strong>Документов не найдено</strong>
+          <span>Попробуйте изменить период, склад или поиск</span>
+        </div>
+      );
+    }
+
+    return rows.map((doc) => {
+      const isOpen = expandedId === doc.id;
+      const state = details[doc.id];
+      const detail = state?.doc;
+      const storeNames = (doc.stores || []).map((store) => store.name).join(", ");
+
+      return (
+        <article key={doc.id}>
+          <div
+            className="document-card"
+            onClick={() => toggleDocument(doc.id)}
+            onKeyDown={(event) => {
+              if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                toggleDocument(doc.id);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            aria-expanded={isOpen}
+          >
+            <div className="document-mark">
+              <Icon name="document" />
+            </div>
+
+            <div className="document-main">
+              <small>
+                {doc.number || "—"} · {formatDocDate(doc.date)}
+                {doc.invoiceIncomingNumber ? ` · ${doc.invoiceIncomingNumber}` : ""}
+              </small>
+              <strong>{doc.supplierName || `ID ${shortUuid(doc.supplierId)}`}</strong>
+              <span>{storeNames || "Склад не указан"}</span>
+            </div>
+
+            <div className="document-meta">
+              <strong>{formatMoney(doc.sum)}</strong>
+              {doc.hasDifference && <span className="status draft">Есть расхождения</span>}
+            </div>
+
+            <button
+              aria-label={`${isOpen ? "Свернуть" : "Развернуть"} накладную ${doc.number || ""}`}
+              className="document-menu"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleDocument(doc.id);
+              }}
+            >
+              <Icon name={isOpen ? "chevron" : "dots"} />
+            </button>
+          </div>
+
+          {isOpen && (
+            <div className="document-detail">
+              {state?.loading && <div className="x-note">Открываем накладную…</div>}
+              {state?.error && <div className="x-note">{state.error}</div>}
+
+              {detail && (
+                <>
+                  <div className="x-meta-grid">
+                    <div>
+                      <span>Склад</span>
+                      <strong>{detail.storeName || storeNames || "—"}</strong>
+                    </div>
+                    <div>
+                      <span>Поставщик</span>
+                      <strong>{detail.supplierName || `ID ${shortUuid(detail.supplierId)}`}</strong>
+                    </div>
+                    <div>
+                      <span>Статус</span>
+                      <strong>{detail.status || "—"}</strong>
+                    </div>
+                    <div>
+                      <span>Входящий номер</span>
+                      <strong>{detail.invoice || "—"}</strong>
+                    </div>
+                  </div>
+
+                  <div className="document-items-title">
+                    Позиции · {(detail.items || []).length} · итого {formatPrice(detail.total ?? doc.sum)}
+                  </div>
+
+                  <div className="document-items">
+                    {(detail.items || []).map((item, idx) => (
+                      <div className="document-item" key={`${item.productId || "item"}-${idx}`}>
+                        <div className="document-item__name">
+                          <strong>{item.productName || item.productId || "Позиция"}</strong>
+                          <span>{item.productNum || item.code || ""}</span>
+                        </div>
+                        <div className="document-item__qty">
+                          <strong>{numberFormatter.format(item.amount || 0)}</strong>
+                          <span>{item.unit || "—"}</span>
+                        </div>
+                        <div className="document-item__cost">
+                          <strong>{formatPrice(item.price || 0)}</strong>
+                          <span>
+                            за ед.
+                            {item.ndsPercent ? ` · НДС ${numberFormatter.format(item.ndsPercent)}%` : ""}
+                          </span>
+                        </div>
+                        <div className="document-item__sum">{formatPrice(item.sum || 0)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </article>
+      );
+    });
+  };
+
+  const renderOverview = () => (
+    <section className="analytics-kpis" aria-label="Обзор закупок">
+      <article>
+        <span>Закупки</span>
+        <strong>{formatMoney(totalSum)}</strong>
+        <small>за период</small>
+      </article>
+      <article>
+        <span>Накладных</span>
+        <strong>{rows.length}</strong>
+        <small>приходных</small>
+      </article>
+      <article>
+        <span>Поставщиков</span>
+        <strong>{suppliers.length}</strong>
+        <small>активных</small>
+      </article>
+      <article>
+        <span>Расхождения</span>
+        <strong>{rows.filter((doc) => doc.hasDifference).length}</strong>
+        <small>накладных</small>
+      </article>
+    </section>
+  );
+
+  const renderSuppliers = () =>
+    suppliers.length ? (
+      <section className="top-products" aria-label="Поставщики">
+        <div className="analytics-heading">
+          <div>
+            <span>Поставщики</span>
+            <strong>По сумме закупок</strong>
+          </div>
+          <b>{formatMoney(totalSum)}</b>
+        </div>
+        <div className="product-ranking">
+          {suppliers.map((supplier, index) => (
+            <div key={supplier.id}>
+              <b>{index + 1}</b>
+              <span>
+                <strong>{supplier.name}</strong>
+              </span>
+              <small>
+                {formatMoney(supplier.sum)} · {supplier.count} накл.
+              </small>
+            </div>
+          ))}
+        </div>
+      </section>
+    ) : (
+      <div className="empty-state">
+        <strong>Поставщиков не найдено</strong>
+        <span>Измените период, склад или поиск</span>
+      </div>
+    );
+
+  const renderPrices = () => {
+    const state = prices?.key === analyticsKey ? prices : null;
+
+    if (!state || state.loading) return <div className="x-note">Собираем историю цен по накладным периода…</div>;
+    if (state.error)
+      return (
+        <div className="empty-state" role="alert">
+          <strong>Не удалось собрать цены</strong>
+          <span>{state.error}</span>
+        </div>
+      );
+
+    const products = (state.data?.products || []).filter((product) => matchesText(q, product.name, product.code));
+
+    return (
+      <>
+        {!!state.data?.failed && (
+          <div className="x-note">Не удалось получить {state.data.failed} накладных — данные могут быть неполными.</div>
+        )}
+
+        {products.length ? (
+          <div className="x-cards">
+            {products.slice(0, ANALYTICS_RENDER_LIMIT).map((product, index) => (
+              <article className="x-card" key={`${product.code}-${product.name}-${index}`}>
+                <div className="x-card-head">
+                  <strong>{product.name}</strong>
+                  <small>
+                    {product.code} · {product.unit} · {formatDocDate(product.lastDate)}
+                  </small>
+                  <small>{product.lastSupplierName}</small>
+                </div>
+                <div className="x-card-grid">
+                  <div>
+                    <span>Последняя</span>
+                    <strong>{formatPrice(product.lastPrice)}</strong>
+                  </div>
+                  <div>
+                    <span>Изменение</span>
+                    <strong
+                      className={product.changePct && product.changePct > 0 ? "x-up" : product.changePct && product.changePct < 0 ? "x-down" : ""}
+                    >
+                      {product.changePct === null
+                        ? "—"
+                        : `${product.changePct > 0 ? "+" : ""}${product.changePct.toFixed(1)}%`}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Средняя</span>
+                    <strong>{formatPrice(product.weightedAveragePrice)}</strong>
+                  </div>
+                  <div>
+                    <span>Мин / Макс</span>
+                    <strong>
+                      {formatPrice(product.minPrice)} / {formatPrice(product.maxPrice)}
+                    </strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <strong>Цен не найдено</strong>
+            <span>За выбранный период нет закупок или поиск ничего не нашёл</span>
+          </div>
+        )}
+
+        {products.length > ANALYTICS_RENDER_LIMIT && (
+          <div className="x-note">Показаны первые {ANALYTICS_RENDER_LIMIT} товаров. Используйте поиск.</div>
+        )}
+      </>
+    );
+  };
+
+  const renderMatrix = () => {
+    const state = matrix?.key === analyticsKey ? matrix : null;
+
+    if (!state || state.loading)
+      return <div className="x-note">Строим матрицу цен за последние {MATRIX_HISTORY_DAYS} дней…</div>;
+    if (state.error)
+      return (
+        <div className="empty-state" role="alert">
+          <strong>Не удалось построить матрицу</strong>
+          <span>{state.error}</span>
+        </div>
+      );
+
+    const matrixRows = (state.data?.rows || []).filter((row) => matchesText(q, row.name, row.code));
+
+    return (
+      <>
+        <div className="x-note">
+          Последняя фактическая цена каждого поставщика за {MATRIX_HISTORY_DAYS} дней до{" "}
+          {formatDocDate(state.data?.asOf)}. Лучшая цена выделена.
+        </div>
+
+        {!!state.data?.failed && (
+          <div className="x-note">Не удалось получить {state.data.failed} накладных — данные могут быть неполными.</div>
+        )}
+
+        {matrixRows.length ? (
+          <div className="x-cards">
+            {matrixRows.slice(0, ANALYTICS_RENDER_LIMIT).map((row, index) => (
+              <details className="x-card x-matrix" key={`${row.code}-${row.name}-${index}`}>
+                <summary>
+                  <div className="x-card-head">
+                    <strong>{row.name}</strong>
+                    <small>
+                      {row.code} · {row.unit} · поставщиков: {row.supplierCount}
+                    </small>
+                  </div>
+                  <div className="x-matrix-best">
+                    <span>Лучшая</span>
+                    <strong>{formatPrice(row.bestPrice)}</strong>
+                    <small>{row.bestSupplierName}</small>
+                  </div>
+                </summary>
+                <div className="x-matrix-suppliers">
+                  {row.suppliers.map((supplier, idx) => (
+                    <div className={idx === 0 ? "best" : ""} key={`${supplier.supplierId}-${idx}`}>
+                      <span>
+                        <strong>{supplier.supplierName}</strong>
+                        <small>
+                          {formatDocDate(supplier.date)} · {supplier.ageDays} дн. назад
+                        </small>
+                      </span>
+                      <strong>{formatPrice(supplier.price)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <strong>Нет данных для матрицы</strong>
+            <span>За последние {MATRIX_HISTORY_DAYS} дней закупок не найдено</span>
+          </div>
+        )}
+
+        {matrixRows.length > ANALYTICS_RENDER_LIMIT && (
+          <div className="x-note">Показаны первые {ANALYTICS_RENDER_LIMIT} товаров. Используйте поиск.</div>
+        )}
+      </>
+    );
+  };
+
+  const showBody = !error && data !== null;
 
   return (
     <>
@@ -884,108 +2039,122 @@ function DocumentsPage({
 
       <section className="document-summary" aria-label="Сводка документов">
         <div>
-          <span>Документов</span>
-          <strong>{documents.length}</strong>
+          <span>Накладных</span>
+          <strong>{rows.length}</strong>
           <small>за период</small>
         </div>
         <div>
           <span>Сумма</span>
-          <strong>{formatMoney(documents.reduce((sum, item) => sum + (Number(item.sum) || 0), 0))}</strong>
-          <small>по документам</small>
+          <strong>{formatMoney(totalSum)}</strong>
+          <small>по накладным</small>
         </div>
       </section>
 
-      <div className="filter-chips" role="group" aria-label="Фильтр документов">
-        {["Все", "Приход", "Списание", "Инвентаризация"].map((item) => (
-          <button className={filter === item ? "active" : ""} key={item} onClick={() => setFilter(item)} type="button">
-            {item}
+      <div className="filter-chips" role="group" aria-label="Разделы закупок">
+        {DOCUMENT_TABS.map(([value, label]) => (
+          <button className={tab === value ? "active" : ""} key={value} onClick={() => setTab(value)} type="button">
+            {label}
           </button>
         ))}
       </div>
 
-      <section className="document-list" aria-label="Документы">
-        <div className="list-heading">
-          <span>Последние операции</span>
-          <small>{filtered.length} документов</small>
-        </div>
-
-        {filtered.length ? (
-          filtered.map((document, index) => {
-            const items = document.items || [];
-            return (
-              <article key={document.id || document.number || index}>
-                <div className="document-card">
-                  <div className="document-mark">
-                    <Icon name="document" />
-                  </div>
-
-                  <div className="document-main">
-                    <small>
-                      {document.number || "—"} ·{" "}
-                      {document.dateIncoming
-                        ? new Date(document.dateIncoming).toLocaleDateString("ru-RU")
-                        : document.date
-                          ? new Date(document.date).toLocaleDateString("ru-RU")
-                          : "—"}
-                    </small>
-                    <strong>{document.type || "Приходная накладная"}</strong>
-                    <span>{document.counterparty || document.supplierName || "—"}</span>
-                  </div>
-
-                  <div className="document-meta">
-                    <strong>{formatMoney(document.sum || 0)}</strong>
-                    <span className={`status ${document.status === "Черновик" ? "draft" : "positive"}`}>
-                      {document.status || "Проведён"}
-                    </span>
-                  </div>
-
-                  <button
-                    aria-label={`Развернуть документ ${document.number || index}`}
-                    className="document-menu"
-                    type="button"
-                    onClick={() => setExpandedDoc(expandedDoc === index ? null : index)}
-                  >
-                    <Icon name={expandedDoc === index ? "chevron" : "dots"} />
-                  </button>
-                </div>
-
-                {expandedDoc === index && items.length > 0 && (
-                  <div className="document-detail">
-                    <div className="document-items-title">Позиции · {items.length}</div>
-                    <div className="document-items">
-                      {items.map((item, idx) => (
-                        <div className="document-item" key={idx}>
-                          <div className="document-item__name">
-                            <strong>{item.name || item.productId || "Позиция"}</strong>
-                            <span>{item.code || ""}</span>
-                          </div>
-                          <div className="document-item__qty">
-                            <strong>{numberFormatter.format(item.amount || 0)}</strong>
-                            <span>{item.unitName || "шт"}</span>
-                          </div>
-                          <div className="document-item__cost">
-                            <strong>{formatMoney(item.costPrice || 0)}</strong>
-                            <span>за единицу</span>
-                          </div>
-                          <div className="document-item__sum">
-                            {formatMoney((Number(item.amount || 0) * Number(item.costPrice || 0)) || 0)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </article>
-            );
-          })
-        ) : (
-          <div className="empty-state">
-            <strong>Документов не найдено</strong>
-            <span>Попробуйте изменить период или склад</span>
-          </div>
-        )}
+      <section className="toolbar page-toolbar" aria-label="Поиск по закупкам">
+        <label className="search-field">
+          <Icon name="search" />
+          <input
+            aria-label="Поиск по закупкам"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={
+              tab === "prices" || tab === "matrix" ? "Товар или код" : "Номер, поставщик, склад"
+            }
+            value={query}
+          />
+          {query && (
+            <button aria-label="Очистить поиск" onClick={() => setQuery("")} type="button">
+              <Icon name="close" />
+            </button>
+          )}
+        </label>
+        <span className="results-count">{loading ? "Загрузка…" : `${rows.length} накладных`}</span>
       </section>
+
+      {error && (
+        <div className="empty-state" role="alert">
+          <strong>Не удалось загрузить документы</strong>
+          <span>{error}</span>
+        </div>
+      )}
+
+      {loading && data === null && !error && tab !== "matrix" && (
+        <div className="empty-state">
+          <strong>Загружаем приходные накладные…</strong>
+        </div>
+      )}
+
+      {showBody && tab === "documents" && (
+        <section className="document-list" aria-label="Приходные накладные">
+          <div className="list-heading">
+            <span>Приходные накладные</span>
+            <small>{rows.length} документов</small>
+          </div>
+          {renderDocumentList()}
+        </section>
+      )}
+
+      {showBody && tab === "overview" && renderOverview()}
+      {showBody && tab === "suppliers" && renderSuppliers()}
+      {showBody && tab === "prices" && renderPrices()}
+      {tab === "matrix" && !error && renderMatrix()}
     </>
+  );
+}
+
+type AttentionKind = "negative" | "ranout" | "reconciliation";
+
+const ATTENTION_TITLES: Record<AttentionKind, string> = {
+  negative: "Отрицательные остатки",
+  ranout: "Закончились за период",
+  reconciliation: "Контрольные расхождения ОСВ",
+};
+
+function RankingSection({
+  label,
+  title,
+  rows,
+}: {
+  label: string;
+  title: string;
+  rows: DashboardRow[];
+}) {
+  if (!rows.length) return null;
+
+  const top = rows.slice(0, 5);
+  const max = Math.max(1, ...top.map((item) => Math.abs(Number(item.rankValue || 0))));
+
+  return (
+    <section className="top-products" aria-label={label}>
+      <div className="analytics-heading">
+        <div>
+          <span>{label}</span>
+          <strong>{title}</strong>
+        </div>
+      </div>
+
+      <div className="product-ranking">
+        {top.map((item, idx) => (
+          <div key={`${item.name}-${item.storeName}-${idx}`}>
+            <b>{idx + 1}</b>
+            <span>
+              <strong>{item.name || "Товар"}</strong>
+              <i>
+                <em className={`share-${sharePercent(item.rankValue, max)}`} />
+              </i>
+            </span>
+            <small>{formatMoney(item.rankValue || 0)}</small>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -995,18 +2164,35 @@ function AnalyticsPage({
   warehouse,
   onWarehouseChange,
   dashboard,
+  loading,
+  error,
 }: {
   period: DateRange;
   onOpenCalendar: () => void;
   warehouse: string;
   onWarehouseChange: (warehouse: string) => void;
-  dashboard: any;
+  dashboard: DashboardData | null;
+  loading: boolean;
+  error: string | null;
 }) {
+  const [attention, setAttention] = useState<AttentionKind | null>(null);
+
   const summary = dashboard?.summary || {};
   const stores = dashboard?.stores || [];
-  const topDecrease = dashboard?.topDecrease || [];
-  const topWriteoff = dashboard?.topWriteoff || [];
-  const topStock = dashboard?.topStock || [];
+  const problemCount =
+    Number(summary.negativeCount || 0) + Number(summary.ranOutCount || 0) + Number(summary.reconciliationCount || 0);
+  const healthPercent = Math.max(0, 100 - (Number(summary.negativeCount || 0) + Number(summary.ranOutCount || 0)) * 5);
+
+  const attentionRows: DashboardRow[] =
+    attention === "negative"
+      ? dashboard?.negatives || []
+      : attention === "ranout"
+        ? dashboard?.ranOut || []
+        : attention === "reconciliation"
+          ? dashboard?.reconciliation || []
+          : [];
+
+  const maxStoreValue = Math.max(1, ...stores.map((item) => Math.abs(Number(item.closeValue || 0))));
 
   return (
     <>
@@ -1023,216 +2209,245 @@ function AnalyticsPage({
 
       <WorkspaceActions warehouse={warehouse} onWarehouseChange={onWarehouseChange} />
 
-      <section className="analytics-kpis" aria-label="Ключевые показатели">
-        <article>
-          <span>Запасы сейчас</span>
-          <strong>{formatMoney(summary.closeValue || 0)}</strong>
-          <small>{summary.storesCount || stores.length || 0} склад(а)</small>
-        </article>
-        <article>
-          <span>Изменение запасов</span>
-          <strong>
-            {summary.deltaValue ? `${summary.deltaValue > 0 ? "+" : ""}${formatMoney(summary.deltaValue)}` : "0 ₽"}
-          </strong>
-          <small>по себестоимости</small>
-        </article>
-        <article>
-          <span>Приход</span>
-          <strong>{formatMoney(Math.abs(Number(summary.incomingValue || 0)))}</strong>
-          <small>по себестоимости</small>
-        </article>
-        <article>
-          <span>Расход по продажам</span>
-          <strong>{formatMoney(Math.abs(Number(summary.salesCost || 0)))}</strong>
-          <small>по себестоимости</small>
-        </article>
-        <article>
-          <span>Списания</span>
-          <strong>{formatMoney(summary.writeoffCost || 0)}</strong>
-          <small>по себестоимости</small>
-        </article>
-        <article>
-          <span>Проблем</span>
-          <strong>{(summary.negativeCount || 0) + (summary.ranOutCount || 0)}</strong>
-          <small>требуют внимания</small>
-        </article>
-      </section>
+      {loading && (
+        <div className="empty-state">
+          <strong>Собираем дашборд…</strong>
+          <span>ОСВ по складам может занять несколько секунд</span>
+        </div>
+      )}
 
-      {stores.length > 0 && (
-        <section className="revenue-chart" aria-label="Данные по складам">
-          <div className="analytics-heading">
-            <div>
-              <span>Склады</span>
-              <strong>Стоимость запасов</strong>
-            </div>
-            <b>{formatMoney(summary.closeValue || 0)}</b>
-          </div>
+      {error && (
+        <div className="empty-state" role="alert">
+          <strong>Не удалось загрузить дашборд</strong>
+          <span>{error}</span>
+        </div>
+      )}
 
-          <div className="chart-area">
-            {stores.map((store, index) => {
-              const maxValue = Math.max(
-                1,
-                ...stores.map((item) => Math.abs(Number(item.closeValue || 0))),
-              );
-              const width = Math.max(
-                10,
-                Math.min(100, (Math.abs(Number(store.closeValue || 0)) / maxValue) * 100),
-              );
+      {dashboard && !error && (
+        <>
+          <section className="analytics-kpis" aria-label="Ключевые показатели">
+            <article>
+              <span>Запасы сейчас</span>
+              <strong>{formatMoney(summary.closeValue || 0)}</strong>
+              <small>
+                {summary.storesCount || stores.length || 0} склад(а) · на начало {formatMoney(summary.openValue || 0)}
+              </small>
+            </article>
+            <article>
+              <span>Изменение запасов</span>
+              <strong>{formatSignedMoney(summary.deltaValue)}</strong>
+              <small>по себестоимости</small>
+            </article>
+            <article>
+              <span>Приход</span>
+              <strong>{formatMoney(Math.abs(Number(summary.incomingValue || 0)))}</strong>
+              <small>по себестоимости</small>
+            </article>
+            <article>
+              <span>Расход по продажам</span>
+              <strong>{formatMoney(Math.abs(Number(summary.salesCost || 0)))}</strong>
+              <small>это не выручка</small>
+            </article>
+            <article>
+              <span>Списания</span>
+              <strong>{formatMoney(Math.abs(Number(summary.writeoffCost || 0)))}</strong>
+              <small>по себестоимости</small>
+            </article>
+            <article>
+              <span>Проблем</span>
+              <strong>{problemCount}</strong>
+              <small>требуют внимания</small>
+            </article>
+          </section>
 
-              return (
-                <div className="chart-column" key={store.name || index}>
-                  <span className={`bar-${Math.min(100, Math.max(10, Math.round(width)))}`} />
-                  <small>{store.name || "Склад"}</small>
+          {stores.length > 0 && (
+            <section className="revenue-chart" aria-label="Данные по складам">
+              <div className="analytics-heading">
+                <div>
+                  <span>Склады</span>
+                  <strong>Стоимость запасов</strong>
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      <div className="analytics-grid">
-        <section className="top-products" aria-label="Ключевые проблемы">
-          <div className="analytics-heading">
-            <div>
-              <span>Требует внимания</span>
-              <strong>Сводка</strong>
-            </div>
-          </div>
-
-          <div className="product-ranking">
-            <div>
-              <b>1</b>
-              <span>
-                <strong>Отрицательные остатки</strong>
-              </span>
-              <small>{summary.negativeCount || 0}</small>
-            </div>
-            <div>
-              <b>2</b>
-              <span>
-                <strong>Закончились</strong>
-              </span>
-              <small>{summary.ranOutCount || 0}</small>
-            </div>
-            <div>
-              <b>3</b>
-              <span>
-                <strong>Продано за период</strong>
-              </span>
-              <small>{formatMoney(summary.salesCost || 0)}</small>
-            </div>
-          </div>
-        </section>
-
-        <section className="stock-health" aria-label="Состояние остатков">
-          <div className="analytics-heading">
-            <div>
-              <span>Состояние остатков</span>
-              <strong>{summary.negativeCount || 0} проблем</strong>
-            </div>
-          </div>
-
-          <div className="health-ring">
-            <strong>{Math.max(0, 100 - ((summary.negativeCount || 0) + (summary.ranOutCount || 0)) * 5)}%</strong>
-            <span>в норме</span>
-          </div>
-
-          <div className="health-legend">
-            <div>
-              <i className="healthy" />
-              <span>В норме</span>
-              <b>{Math.max(0, 100 - ((summary.negativeCount || 0) + (summary.ranOutCount || 0)) * 5)}</b>
-            </div>
-            <div>
-              <i className="low" />
-              <span>Заканчиваются</span>
-              <b>{summary.ranOutCount || 0}</b>
-            </div>
-            <div>
-              <i className="critical" />
-              <span>Нет в наличии</span>
-              <b>{summary.negativeCount || 0}</b>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {topDecrease.length > 0 && (
-        <section className="top-products" aria-label="Наибольшее снижение запасов">
-          <div className="analytics-heading">
-            <div>
-              <span>Наибольшее снижение запасов</span>
-              <strong>По себестоимости</strong>
-            </div>
-          </div>
-
-          <div className="product-ranking">
-            {topDecrease.slice(0, 5).map((item, idx) => (
-              <div key={idx}>
-                <b>{idx + 1}</b>
-                <span>
-                  <strong>{item.name || "Товар"}</strong>
-                  <i>
-                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
-                  </i>
-                </span>
-                <small>{formatMoney(item.rankValue || 0)}</small>
+                <b>{formatMoney(summary.closeValue || 0)}</b>
               </div>
-            ))}
-          </div>
-        </section>
-      )}
 
-      {topWriteoff.length > 0 && (
-        <section className="top-products" aria-label="Больше всего списали">
-          <div className="analytics-heading">
-            <div>
-              <span>Больше всего списали</span>
-              <strong>По себестоимости</strong>
-            </div>
-          </div>
+              <div className="chart-area">
+                {stores.map((store, index) => {
+                  const width = Math.max(
+                    10,
+                    Math.min(100, (Math.abs(Number(store.closeValue || 0)) / maxStoreValue) * 100),
+                  );
 
-          <div className="product-ranking">
-            {topWriteoff.slice(0, 5).map((item, idx) => (
-              <div key={idx}>
-                <b>{idx + 1}</b>
-                <span>
-                  <strong>{item.name || "Товар"}</strong>
-                  <i>
-                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
-                  </i>
-                </span>
-                <small>{formatMoney(item.rankValue || 0)}</small>
+                  return (
+                    <div className="chart-column" key={store.name || index}>
+                      <span className={`bar-${Math.min(100, Math.max(10, Math.round(width)))}`} />
+                      <small>{store.name || "Склад"}</small>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        </section>
-      )}
 
-      {topStock.length > 0 && (
-        <section className="top-products" aria-label="Самые дорогие остатки">
-          <div className="analytics-heading">
-            <div>
-              <span>Самые дорогие остатки</span>
-              <strong>Стоимость</strong>
-            </div>
-          </div>
-
-          <div className="product-ranking">
-            {topStock.slice(0, 5).map((item, idx) => (
-              <div key={idx}>
-                <b>{idx + 1}</b>
-                <span>
-                  <strong>{item.name || "Товар"}</strong>
-                  <i>
-                    <em className={`share-${Math.min(100, Math.max(10, Math.round((item.rankValue || 0) / 10)))}`} />
-                  </i>
-                </span>
-                <small>{formatMoney(item.rankValue || 0)}</small>
+              <div className="x-store-list">
+                {stores.map((store, index) => (
+                  <div key={`${store.name}-${index}`}>
+                    <span>
+                      <strong>{store.name || "Склад"}</strong>
+                      <small>
+                        {formatSignedMoney(store.deltaValue)} · {store.negativeCount || 0} отриц. ·{" "}
+                        {store.ranOutCount || 0} законч.
+                      </small>
+                    </span>
+                    <strong>{formatMoney(store.closeValue || 0)}</strong>
+                  </div>
+                ))}
               </div>
-            ))}
+            </section>
+          )}
+
+          <div className="analytics-grid">
+            <section className="top-products" aria-label="Ключевые проблемы">
+              <div className="analytics-heading">
+                <div>
+                  <span>Требует внимания</span>
+                  <strong>Нажмите, чтобы увидеть позиции</strong>
+                </div>
+              </div>
+
+              <div className="product-ranking">
+                {(["negative", "ranout", "reconciliation"] as AttentionKind[]).map((kind, index) => {
+                  const count =
+                    kind === "negative"
+                      ? summary.negativeCount
+                      : kind === "ranout"
+                        ? summary.ranOutCount
+                        : summary.reconciliationCount;
+
+                  return (
+                    <div
+                      className="x-clickable"
+                      key={kind}
+                      onClick={() => setAttention(attention === kind ? null : kind)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setAttention(attention === kind ? null : kind);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={attention === kind}
+                    >
+                      <b>{index + 1}</b>
+                      <span>
+                        <strong>{ATTENTION_TITLES[kind]}</strong>
+                      </span>
+                      <small>{count || 0}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="stock-health" aria-label="Состояние остатков">
+              <div className="analytics-heading">
+                <div>
+                  <span>Состояние остатков</span>
+                  <strong>{problemCount} проблем</strong>
+                </div>
+              </div>
+
+              <div className="health-ring">
+                <strong>{healthPercent}%</strong>
+                <span>в норме</span>
+              </div>
+
+              <div className="health-legend">
+                <div>
+                  <i className="healthy" />
+                  <span>В норме</span>
+                  <b>{healthPercent}</b>
+                </div>
+                <div>
+                  <i className="low" />
+                  <span>Закончились</span>
+                  <b>{summary.ranOutCount || 0}</b>
+                </div>
+                <div>
+                  <i className="critical" />
+                  <span>Отрицательные</span>
+                  <b>{summary.negativeCount || 0}</b>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
+
+          {attention && (
+            <section className="x-detail" aria-label={ATTENTION_TITLES[attention]}>
+              <div className="x-detail-head">
+                <strong>{ATTENTION_TITLES[attention]}</strong>
+                <button aria-label="Закрыть список" onClick={() => setAttention(null)} type="button">
+                  <Icon name="close" />
+                </button>
+              </div>
+
+              {attentionRows.length ? (
+                attentionRows.map((row, idx) => (
+                  <div className="x-detail-row" key={`${row.name}-${row.storeName}-${idx}`}>
+                    <span>
+                      <strong>{row.name || "Товар"}</strong>
+                      <small>{row.storeName || ""}</small>
+                    </span>
+                    <span>
+                      <strong>
+                        {numberFormatter.format(row.closeQty || 0)} {row.unit || ""}
+                      </strong>
+                      <small>{formatMoney(row.closeAmt || 0)}</small>
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="x-note">Нет позиций</div>
+              )}
+            </section>
+          )}
+
+          <RankingSection label="Наибольшее снижение запасов" title="По себестоимости" rows={dashboard.topDecrease || []} />
+          <RankingSection label="Больше всего списали" title="По себестоимости" rows={dashboard.topWriteoff || []} />
+          <RankingSection
+            label="Наибольший складской расход по продажам"
+            title="По себестоимости"
+            rows={dashboard.topSalesUsage || []}
+          />
+          <RankingSection label="Самые дорогие остатки" title="Стоимость" rows={dashboard.topStock || []} />
+
+          <section className="analytics-kpis" aria-label="Движение по себестоимости">
+            <article>
+              <span>Инвентаризация</span>
+              <strong>{formatSignedMoney(summary.inventoryEffect)}</strong>
+              <small>эффект на запасы</small>
+            </article>
+            <article>
+              <span>Производство</span>
+              <strong>{formatSignedMoney(summary.productionEffect)}</strong>
+              <small>эффект на запасы</small>
+            </article>
+            <article>
+              <span>Перемещения</span>
+              <strong>{formatSignedMoney(summary.transferEffect)}</strong>
+              <small>эффект на запасы</small>
+            </article>
+          </section>
+
+          {(dashboard.failedStores || []).length > 0 && (
+            <div className="x-note">
+              Не удалось получить данные по складам: {dashboard.failedStores?.length}. Показатели могут быть неполными.
+            </div>
+          )}
+
+          <div className="x-note">
+            iikoOffice ОСВ · {numberFormatter.format(summary.productRows || 0)} строк ·{" "}
+            {dashboard.cache?.cached ? "из кэша" : `${numberFormatter.format(dashboard.performance?.totalMs || 0)} мс`}
+          </div>
+        </>
       )}
     </>
   );
@@ -1334,18 +2549,24 @@ function AuthPage({ onLogin }: { onLogin: () => void }) {
   );
 }
 
+const STOCK_RENDER_STEP = 100;
+
+function stockKey(item: StockApiItem) {
+  return String(item.id || item.productNum || item.productName || "");
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activePage, setActivePage] = useState<"catalog" | "stock" | "documents" | "reports">("stock");
   const [warehouse, setWarehouse] = useState(ALL_WAREHOUSES_LABEL);
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState<number | null>(0);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(STOCK_RENDER_STEP);
 
   // Дата подгружается сегодняшняя
-  const today = new Date();
-  const [period, setPeriod] = useState<DateRange>({
-    start: today,
-    end: today,
+  const [period, setPeriod] = useState<DateRange>(() => {
+    const today = new Date();
+    return { start: today, end: today };
   });
 
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -1353,47 +2574,70 @@ export default function App() {
   const [compactCards, setCompactCards] = useState(false);
   const [dockSettingsOpen, setDockSettingsOpen] = useState(false);
 
+  // Каждое нажатие «Обновить» увеличивает токен: данные перезагружаются без кэша
+  const [reloadToken, setReloadToken] = useState(0);
+
   const [stockItems, setStockItems] = useState<StockApiItem[]>([]);
-  const [stockMeta, setStockMeta] = useState<{ time: string } | null>(null);
+  const [stockMeta, setStockMeta] = useState<{ time: string; cached: boolean } | null>(null);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
-  const [turnoverData, setTurnoverData] = useState<any[]>([]);
+  const [turnoverData, setTurnoverData] = useState<TurnoverRow[]>([]);
 
-  const [documentsData, setDocumentsData] = useState<any[]>([]);
+  const [documentsData, setDocumentsData] = useState<IncomingListResponse | null>(null);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentsError, setDocumentsError] = useState<string | null>(null);
 
-  const [nomenclatureItems, setNomenclatureItems] = useState<any[]>([]);
+  const [nomenclatureItems, setNomenclatureItems] = useState<NomenclatureItem[]>([]);
   const [nomenclatureLoading, setNomenclatureLoading] = useState(false);
   const [nomenclatureError, setNomenclatureError] = useState<string | null>(null);
 
-  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  const refreshing = stockLoading;
+  // Токен, на котором данные раздела были загружены в последний раз.
+  // Если он меньше текущего — это ручное обновление, и кэш воркера нужно обойти.
+  const loadedToken = useRef({ stock: 0, turnover: 0, catalog: 0, dashboard: 0 });
+  const stockWarehouse = useRef<string | null>(null);
 
+  const from = isoDateLocal(period.start);
+  const to = isoDateLocal(period.end);
+
+  const refreshing =
+    (activePage === "stock" && stockLoading) ||
+    (activePage === "documents" && documentsLoading) ||
+    (activePage === "catalog" && nomenclatureLoading) ||
+    (activePage === "reports" && dashboardLoading);
+
+  /* ---------- Остатки ---------- */
   useEffect(() => {
     if (activePage !== "stock") return;
 
     const controller = new AbortController();
+    const forceRefresh = reloadToken > loadedToken.current.stock;
+
+    // При смене склада сразу показываем сохранённые остатки (или пустой список), а не данные прошлого склада
+    if (stockWarehouse.current !== warehouse) {
+      const cached = readStockCache(warehouse);
+      setStockItems(cached?.items ?? []);
+      setStockMeta(cached ? { time: cached.time, cached: true } : null);
+      stockWarehouse.current = warehouse;
+    }
+
     setStockLoading(true);
     setStockError(null);
 
-    const request =
-      warehouse === ALL_WAREHOUSES_LABEL
-        ? fetchLiveStockMerged(controller.signal)
-        : fetchLiveStockForStore(warehouse, controller.signal);
-
-    request
+    fetchLiveStock(warehouse, { signal: controller.signal, forceRefresh })
       .then((payload) => {
-        setStockItems(payload.items);
-        setStockMeta({ time: payload.time });
+        if (controller.signal.aborted) return;
+        loadedToken.current.stock = reloadToken;
+        setStockItems(payload.items || []);
+        setStockMeta({ time: payload.time, cached: false });
+        saveStockCache(warehouse, payload);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setStockError(error instanceof Error ? error.message : String(error));
+        setStockError(errorMessage(error));
       })
       .finally(() => {
         if (!controller.signal.aborted) setStockLoading(false);
@@ -1402,88 +2646,127 @@ export default function App() {
     return () => controller.abort();
   }, [activePage, warehouse, reloadToken]);
 
+  /* ---------- ОСВ для карточек остатков ---------- */
   useEffect(() => {
     if (activePage !== "stock") return;
 
-    (async () => {
-      try {
-        const from = isoDateLocal(period.start);
-        const to = isoDateLocal(period.end);
-        const payload = await fetchTurnover(from, to, warehouse);
-        setTurnoverData(payload.rows || []);
-      } catch (error) {
-        console.error("Turnover error:", error);
-      }
-    })();
-  }, [activePage, warehouse, period.start, period.end]);
+    const controller = new AbortController();
+    const forceRefresh = reloadToken > loadedToken.current.turnover;
 
+    setTurnoverData([]);
+
+    fetchTurnover(from, to, warehouse, { signal: controller.signal, forceRefresh })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        loadedToken.current.turnover = reloadToken;
+        setTurnoverData(payload.rows || []);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) console.error("Turnover error:", error);
+      });
+
+    return () => controller.abort();
+  }, [activePage, warehouse, from, to, reloadToken]);
+
+  /* ---------- Приходные накладные ---------- */
   useEffect(() => {
     if (activePage !== "documents") return;
 
-    (async () => {
-      try {
-        setDocumentsLoading(true);
-        setDocumentsError(null);
+    const controller = new AbortController();
 
-        const from = isoDateLocal(period.start);
-        const to = isoDateLocal(period.end);
+    setDocumentsLoading(true);
+    setDocumentsError(null);
+    setDocumentsData(null);
 
-        const payload = await fetchDocumentsForPeriod(from, to, warehouse);
-        setDocumentsData(payload.documents || payload.items || []);
-      } catch (error) {
-        setDocumentsError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setDocumentsLoading(false);
-      }
-    })();
-  }, [activePage, warehouse, period.start, period.end]);
+    fetchIncomingDocuments(from, to, warehouse, { signal: controller.signal })
+      .then((payload) => {
+        if (!controller.signal.aborted) setDocumentsData({ ...payload, documents: payload.documents || [] });
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setDocumentsError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDocumentsLoading(false);
+      });
 
+    return () => controller.abort();
+  }, [activePage, warehouse, from, to, reloadToken]);
+
+  /* ---------- Номенклатура ---------- */
   useEffect(() => {
     if (activePage !== "catalog") return;
 
-    (async () => {
-      try {
-        setNomenclatureLoading(true);
-        setNomenclatureError(null);
+    // Номенклатура не зависит от склада и периода — повторно грузим её только по кнопке «Обновить»
+    const manualRefresh = reloadToken > loadedToken.current.catalog;
+    if (!manualRefresh && nomenclatureItems.length > 0) return;
 
-        const payload = await fetchNomenclature();
-        setNomenclatureItems(payload.items || payload.dishes || []);
-      } catch (error) {
-        setNomenclatureError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setNomenclatureLoading(false);
-      }
-    })();
-  }, [activePage]);
+    const controller = new AbortController();
 
+    setNomenclatureLoading(true);
+    setNomenclatureError(null);
+
+    fetchNomenclature({ signal: controller.signal, forceRefresh: manualRefresh })
+      .then((items) => {
+        if (controller.signal.aborted) return;
+        loadedToken.current.catalog = reloadToken;
+        setNomenclatureItems(items);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setNomenclatureError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setNomenclatureLoading(false);
+      });
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, reloadToken]);
+
+  /* ---------- Дашборд ---------- */
   useEffect(() => {
     if (activePage !== "reports") return;
 
-    (async () => {
-      try {
-        setDashboardLoading(true);
-        setDashboardError(null);
+    const controller = new AbortController();
+    const forceRefresh = reloadToken > loadedToken.current.dashboard;
 
-        const from = isoDateLocal(period.start);
-        const to = isoDateLocal(period.end);
+    setDashboardLoading(true);
+    setDashboardError(null);
 
-        const payload = await fetchDashboard(from, to, warehouse);
+    fetchDashboard(from, to, warehouse, { signal: controller.signal, forceRefresh })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        loadedToken.current.dashboard = reloadToken;
         setDashboardData(payload);
-      } catch (error) {
-        setDashboardError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setDashboardLoading(false);
-      }
-    })();
-  }, [activePage, warehouse, period.start, period.end]);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setDashboardError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDashboardLoading(false);
+      });
 
-  const filteredProducts = useMemo(
-    () =>
-      stockItems.filter((item) =>
-        item.productName.toLocaleLowerCase("ru-RU").includes(query.toLocaleLowerCase("ru-RU")),
-      ),
-    [stockItems, query],
-  );
+    return () => controller.abort();
+  }, [activePage, warehouse, from, to, reloadToken]);
+
+  useEffect(() => {
+    setVisibleCount(STOCK_RENDER_STEP);
+    setExpanded(null);
+  }, [query, warehouse]);
+
+  const filteredProducts = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("ru-RU");
+    if (!q) return stockItems;
+
+    return stockItems.filter(
+      (item) =>
+        String(item.productName || "")
+          .toLocaleLowerCase("ru-RU")
+          .includes(q) ||
+        String(item.productNum || "")
+          .toLocaleLowerCase("ru-RU")
+          .includes(q),
+    );
+  }, [stockItems, query]);
 
   const stockTotals = useMemo(
     () =>
@@ -1496,6 +2779,24 @@ export default function App() {
       ),
     [stockItems],
   );
+
+  // Быстрый поиск строки ОСВ для карточки: сначала по id, затем по артикулу и названию
+  const turnoverIndex = useMemo(() => {
+    const byId = new Map<string, TurnoverRow>();
+    const byCode = new Map<string, TurnoverRow>();
+    const byName = new Map<string, TurnoverRow>();
+
+    for (const row of turnoverData) {
+      if (row.id) byId.set(String(row.id), row);
+      if (row.code) byCode.set(String(row.code), row);
+      if (row.name) byName.set(String(row.name), row);
+    }
+
+    return (product: StockApiItem) =>
+      byId.get(String(product.id)) ??
+      (product.productNum ? byCode.get(String(product.productNum)) : undefined) ??
+      byName.get(String(product.productName));
+  }, [turnoverData]);
 
   const refreshData = () => {
     if (refreshing) return;
@@ -1510,76 +2811,37 @@ export default function App() {
     <main className="app-shell">
       <div className="page">
         {activePage === "catalog" && (
-          <>
-            {nomenclatureLoading && (
-              <div className="empty-state">
-                <strong>Загрузка номенклатуры…</strong>
-              </div>
-            )}
-            {nomenclatureError && (
-              <div className="empty-state">
-                <strong>Не удалось загрузить номенклатуру</strong>
-                <span>{nomenclatureError}</span>
-              </div>
-            )}
-            {!nomenclatureLoading && !nomenclatureError && (
-              <NomenclaturePage
-                warehouse={warehouse}
-                onWarehouseChange={setWarehouse}
-                recipes={nomenclatureItems}
-              />
-            )}
-          </>
+          <NomenclaturePage
+            error={nomenclatureError}
+            loading={nomenclatureLoading}
+            recipes={nomenclatureItems}
+            reloadToken={reloadToken}
+          />
         )}
 
         {activePage === "documents" && (
-          <>
-            {documentsLoading && (
-              <div className="empty-state">
-                <strong>Загрузка документов…</strong>
-              </div>
-            )}
-            {documentsError && (
-              <div className="empty-state">
-                <strong>Не удалось загрузить документы</strong>
-                <span>{documentsError}</span>
-              </div>
-            )}
-            {!documentsLoading && !documentsError && (
-              <DocumentsPage
-                warehouse={warehouse}
-                onWarehouseChange={setWarehouse}
-                period={period}
-                onOpenCalendar={() => setCalendarOpen(true)}
-                documents={documentsData}
-              />
-            )}
-          </>
+          <DocumentsPage
+            data={documentsData}
+            error={documentsError}
+            loading={documentsLoading}
+            onOpenCalendar={() => setCalendarOpen(true)}
+            onWarehouseChange={setWarehouse}
+            period={period}
+            reloadToken={reloadToken}
+            warehouse={warehouse}
+          />
         )}
 
         {activePage === "reports" && (
-          <>
-            {dashboardLoading && (
-              <div className="empty-state">
-                <strong>Собираем дашборд…</strong>
-              </div>
-            )}
-            {dashboardError && (
-              <div className="empty-state">
-                <strong>Не удалось загрузить дашборд</strong>
-                <span>{dashboardError}</span>
-              </div>
-            )}
-            {!dashboardLoading && !dashboardError && (
-              <AnalyticsPage
-                period={period}
-                onOpenCalendar={() => setCalendarOpen(true)}
-                warehouse={warehouse}
-                onWarehouseChange={setWarehouse}
-                dashboard={dashboardData}
-              />
-            )}
-          </>
+          <AnalyticsPage
+            dashboard={dashboardData}
+            error={dashboardError}
+            loading={dashboardLoading}
+            onOpenCalendar={() => setCalendarOpen(true)}
+            onWarehouseChange={setWarehouse}
+            period={period}
+            warehouse={warehouse}
+          />
         )}
 
         {activePage === "stock" && (
@@ -1608,7 +2870,7 @@ export default function App() {
                 <input
                   aria-label="Поиск по товару"
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Поиск по товару"
+                  placeholder="Товар или артикул"
                   value={query}
                 />
                 {query && (
@@ -1618,7 +2880,7 @@ export default function App() {
                 )}
               </label>
               <span className="results-count">
-                {stockLoading ? "Загрузка…" : `${filteredProducts.length} позиций`}
+                {stockLoading ? "Обновляем…" : `${filteredProducts.length} позиций`}
               </span>
             </section>
 
@@ -1636,15 +2898,8 @@ export default function App() {
                   <strong>{warehouse}</strong>
                 </div>
                 <div className="summary-change">
-                  <span>Обновлено</span>
-                  <b>
-                    {stockMeta
-                      ? new Date(stockMeta.time).toLocaleTimeString("ru-RU", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "—"}
-                  </b>
+                  <span>{stockMeta?.cached ? "Сохранено в" : "Обновлено"}</span>
+                  <b>{formatTime(stockMeta?.time)}</b>
                 </div>
                 <div className="summary-end">
                   <span>Сумма остатка</span>
@@ -1655,17 +2910,31 @@ export default function App() {
 
             {!stockError && (
               <section className="list" aria-label="Остатки товаров">
-                {filteredProducts.map((product, index) => (
-                  <ProductCard
-                    expanded={expanded === index}
-                    key={`${product.id}-${index}`}
-                    onToggle={() => setExpanded(expanded === index ? null : index)}
-                    product={product}
-                    showPrices={showPrices}
-                    compact={compactCards}
-                    turnoverData={turnoverData}
-                  />
-                ))}
+                {filteredProducts.slice(0, visibleCount).map((product, index) => {
+                  const key = stockKey(product);
+
+                  return (
+                    <ProductCard
+                      compact={compactCards}
+                      expanded={expanded === key}
+                      key={`${key}-${index}`}
+                      onToggle={() => setExpanded(expanded === key ? null : key)}
+                      product={product}
+                      showPrices={showPrices}
+                      turnover={expanded === key ? turnoverIndex(product) : undefined}
+                    />
+                  );
+                })}
+
+                {filteredProducts.length > visibleCount && (
+                  <button
+                    className="secondary-action x-more"
+                    onClick={() => setVisibleCount((count) => count + STOCK_RENDER_STEP)}
+                    type="button"
+                  >
+                    Показать ещё ({filteredProducts.length - visibleCount})
+                  </button>
+                )}
 
                 {!stockLoading && filteredProducts.length === 0 && (
                   <div className="empty-state">
