@@ -1,120 +1,174 @@
-/* Стили для новых блоков (накладные, цены, матрица, детали аналитики).
-   Цвета нейтральные (полупрозрачные), поэтому подходят и к тёмной, и к светлой теме. */
+/* =========================================================
+   EXTENDED COMPONENTS
+   Стили для накладных, цен, матрицы и деталей аналитики
+   ========================================================= */
+
+/* ---------- Общие ---------- */
 
 .x-note {
-  margin: 10px 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-radius: 14px;
-  background: rgba(127, 127, 127, 0.07);
-  font-size: 13px;
-  line-height: 1.45;
-  opacity: 0.9;
+  margin: 0.75rem 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.85rem;
+  background: #ffffff05;
+  color: var(--text-secondary);
+  font-size: 0.58rem;
+  line-height: 1.65;
 }
 
 .x-pre-line {
   white-space: pre-line;
-  font-weight: 500;
-  line-height: 1.5;
+  color: var(--text);
+  font-weight: 400;
+  line-height: 1.65;
 }
 
 .x-more {
   width: 100%;
-  margin-top: 8px;
+  min-height: 2.6rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.58rem;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
 }
 
-/* ---------- Шапка раскрытой накладной ---------- */
+.x-more:hover {
+  border-color: #66666b;
+  background: #ffffff06;
+  color: var(--text);
+}
+
+
+/* =========================================================
+   ШАПКА РАСКРЫТОЙ НАКЛАДНОЙ
+   ========================================================= */
 
 .x-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
 }
 
 .x-meta-grid > div {
-  display: grid;
-  gap: 2px;
-  padding: 10px 12px;
-  border: 1px solid rgba(127, 127, 127, 0.2);
-  border-radius: 12px;
-  background: rgba(127, 127, 127, 0.06);
   min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: #ffffff05;
 }
 
 .x-meta-grid span,
 .x-card-grid span,
 .x-matrix-best span {
-  font-size: 11px;
-  opacity: 0.65;
-  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-size: 0.5rem;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .x-meta-grid strong {
-  font-size: 13px;
   overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.62rem;
+  font-weight: 500;
 }
 
-/* ---------- Карточки цен и матрицы ---------- */
+
+/* =========================================================
+   КАРТОЧКИ ЦЕН
+   ========================================================= */
 
 .x-cards {
   display: grid;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 0.65rem;
+  margin-top: 0.65rem;
 }
 
 .x-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid rgba(127, 127, 127, 0.22);
-  border-radius: 16px;
-  background: rgba(127, 127, 127, 0.06);
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow: inset 0 1px #ffffff05;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.x-card:hover {
+  border-color: #4a4a4e;
+  background: var(--surface-raised);
 }
 
 .x-card-head {
-  display: grid;
-  gap: 2px;
   min-width: 0;
+  display: grid;
+  gap: 0.25rem;
 }
 
 .x-card-head strong {
-  font-size: 14px;
   overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.66rem;
+  font-weight: 500;
 }
 
 .x-card-head small,
 .x-matrix-best small,
 .x-matrix-suppliers small {
-  font-size: 12px;
-  opacity: 0.65;
+  color: var(--text-secondary);
+  font-size: 0.52rem;
 }
 
 .x-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 0.75rem;
 }
 
 .x-card-grid > div {
+  min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 0.25rem;
 }
 
 .x-card-grid strong {
-  font-size: 14px;
+  color: var(--text);
+  font-family: "Unbounded:Medium", system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 500;
 }
 
+
+/* ---------- Изменение цены ---------- */
+
 .x-up {
-  color: #e5484d;
+  color: var(--negative);
 }
 
 .x-down {
-  color: #30a46c;
+  color: var(--positive);
 }
 
+
+/* =========================================================
+   МАТРИЦА ПОСТАВЩИКОВ
+   ========================================================= */
+
 .x-matrix {
+  overflow: hidden;
   padding: 0;
 }
 
@@ -122,144 +176,292 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
+  gap: 0.75rem;
+  min-height: 4rem;
+  padding: 0.8rem 0.85rem;
+  border: 0;
   cursor: pointer;
   list-style: none;
+  background: transparent;
 }
 
 .x-matrix > summary::-webkit-details-marker {
   display: none;
 }
 
-.x-matrix-best {
+.x-matrix > summary::after {
+  width: 1.8rem;
+  height: 1.8rem;
   display: grid;
-  gap: 2px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffffff08;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  content: "⌄";
+  transition: transform 160ms ease;
+}
+
+.x-matrix[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.x-matrix-best {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
   text-align: right;
   flex-shrink: 0;
 }
 
 .x-matrix-suppliers {
   display: grid;
-  gap: 6px;
-  padding: 0 14px 14px;
+  gap: 0.4rem;
+  padding: 0 0.85rem 0.85rem;
 }
 
 .x-matrix-suppliers > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(127, 127, 127, 0.18);
-  border-radius: 12px;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: #ffffff03;
 }
 
 .x-matrix-suppliers > div > span {
-  display: grid;
-  gap: 2px;
   min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.x-matrix-suppliers > div > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .x-matrix-suppliers > div.best {
-  border-color: rgba(48, 164, 108, 0.6);
-  background: rgba(48, 164, 108, 0.1);
+  border-color: #63c97866;
+  background: #63c9780d;
 }
 
-/* ---------- Аналитика ---------- */
+.x-matrix-suppliers > div.best strong {
+  color: var(--positive);
+}
+
+
+/* =========================================================
+   АНАЛИТИКА — СПИСОК СКЛАДОВ
+   ========================================================= */
 
 .x-store-list {
   display: grid;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
 }
 
 .x-store-list > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(127, 127, 127, 0.18);
-  border-radius: 12px;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: #ffffff03;
 }
 
 .x-store-list span {
-  display: grid;
-  gap: 2px;
   min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.x-store-list span:first-child {
+  overflow: hidden;
+}
+
+.x-store-list strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .x-store-list small {
-  font-size: 12px;
-  opacity: 0.65;
+  color: var(--text-secondary);
+  font-size: 0.5rem;
 }
 
 .x-clickable {
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.x-clickable:hover {
+  border-color: #505055;
+  background: #ffffff06;
 }
 
 .x-clickable:focus-visible {
-  outline: 2px solid rgba(127, 127, 127, 0.7);
+  outline: 2px solid #63c97866;
   outline-offset: 2px;
-  border-radius: 12px;
 }
+
+
+/* =========================================================
+   ДЕТАЛИ АНАЛИТИКИ
+   ========================================================= */
 
 .x-detail {
   display: grid;
-  gap: 8px;
-  margin: 12px 0;
-  padding: 14px;
-  border: 1px solid rgba(127, 127, 127, 0.25);
-  border-radius: 16px;
-  background: rgba(127, 127, 127, 0.07);
+  gap: 0;
+  margin: 0.75rem 0;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--surface-raised);
+  box-shadow: inset 0 1px #ffffff05;
 }
 
 .x-detail-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0.75rem;
+  padding-bottom: 0.65rem;
+}
+
+.x-detail-head strong {
+  color: var(--text);
+  font-size: 0.66rem;
+  font-weight: 500;
 }
 
 .x-detail-head button {
+  width: 2rem;
+  height: 2rem;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
   border: 0;
-  border-radius: 10px;
-  background: rgba(127, 127, 127, 0.14);
-  color: inherit;
+  border-radius: 0.6rem;
+  background: #ffffff08;
+  color: var(--text-secondary);
   cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.x-detail-head button:hover {
+  background: #ffffff0d;
+  color: var(--text);
 }
 
 .x-detail-head .icon {
-  width: 16px;
-  height: 16px;
+  width: 1rem;
+  height: 1rem;
 }
+
+
+/* ---------- Строка детали ---------- */
 
 .x-detail-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid rgba(127, 127, 127, 0.16);
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .x-detail-row > span {
-  display: grid;
-  gap: 2px;
   min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.x-detail-row > span:first-child {
+  overflow: hidden;
 }
 
 .x-detail-row > span:last-child {
-  text-align: right;
   flex-shrink: 0;
+  text-align: right;
+}
+
+.x-detail-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .x-detail-row small {
-  font-size: 12px;
-  opacity: 0.65;
+  color: var(--text-secondary);
+  font-size: 0.5rem;
+}
+
+
+/* =========================================================
+   МОБИЛЬНАЯ ВЕРСИЯ
+   ========================================================= */
+
+@media (max-width: 700px) {
+  .x-meta-grid {
+    gap: 0.45rem;
+  }
+
+  .x-meta-grid > div {
+    padding: 0.65rem;
+  }
+
+  .x-card {
+    padding: 0.75rem;
+    border-radius: 0.9rem;
+  }
+
+  .x-card-grid {
+    gap: 0.55rem;
+  }
+
+  .x-matrix > summary {
+    min-height: 3.7rem;
+    padding: 0.7rem;
+  }
+
+  .x-matrix-suppliers {
+    padding-inline: 0.7rem;
+  }
+
+  .x-detail {
+    padding: 0.75rem;
+    border-radius: 0.9rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .x-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .x-card-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .x-matrix-best {
+    display: none;
+  }
 }
