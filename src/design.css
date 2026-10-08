@@ -1,16 +1,16 @@
 :root {
-  --page-bg: #101714;
-  --surface: #19221e;
-  --surface-raised: #202b25;
+  --page-bg: #141416;
+  --surface: #1e1e21;
+  --surface-raised: #28282c;
   --surface-soft: #ffffff05;
-  --border: #34453b;
-  --border-soft: #2b3b31;
-  --text: #edf4ee;
-  --text-secondary: #b2c0b7;
-  --text-muted: #889c8f;
+  --border: #404046;
+  --border-soft: #34343a;
+  --text: #ededf0;
+  --text-secondary: #b5b5be;
+  --text-muted: #92929d;
   --positive: #80d6a0;
   --negative: #f49a9a;
-  --accent: #93e6b2;
+  --accent: #e4e4e8;
   --accent-soft: #80d6a015;
   --card-shadow: 0 4px 20px #0000000c;
   --raised-shadow: 0 16px 48px #00000030;
@@ -18,24 +18,25 @@
   background: var(--page-bg);
 }
 :root[data-theme="light"] {
-  --page-bg: #f4f7f4;
-  --surface: #ffffff;
-  --surface-raised: #eef4ef;
-  --surface-soft: #f7faf7;
-  --border: #d8e3db;
-  --border-soft: #e5ece6;
-  --text: #20382a;
-  --text-secondary: #52675a;
-  --text-muted: #6b7e70;
+  --page-bg: #deddd8;
+  --surface: #eae9e4;
+  --surface-raised: #d3d2cd;
+  --surface-soft: #e3e2dd;
+  --border: #c1c0b9;
+  --border-soft: #d0cfc8;
+  --text: #28292c;
+  --text-secondary: #55565c;
+  --text-muted: #686970;
   --positive: #227349;
   --negative: #b44049;
   --accent: #227349;
   --accent-soft: #2273490d;
-  --card-shadow: 0 4px 20px #284b3507;
-  --raised-shadow: 0 16px 48px #284b351c;
+  --card-shadow: 0 4px 20px #25252508;
+  --raised-shadow: 0 16px 48px #25252520;
   color-scheme: light;
 }
-body { background: radial-gradient(ellipse at 75% 0, var(--accent-soft), transparent 40rem), var(--page-bg); color: var(--text); }
+html { scrollbar-gutter: stable both-edges; }
+body { background: var(--page-bg); color: var(--text); }
 .page-title { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 720; letter-spacing: -.035em; line-height: 1.2; }
 .eyebrow { color: var(--text-muted); font-size: .75rem; letter-spacing: .02em; }
 .topbar, .section-topbar { margin-bottom: 1.5rem; }
@@ -148,3 +149,9 @@ body { background: radial-gradient(ellipse at 75% 0, var(--accent-soft), transpa
 :root[data-theme="light"] .calendar-grid button.outside { color: var(--text-muted); }
 :root[data-theme="light"] .product-ranking i { background: var(--border); }
 :root[data-theme="light"] .health-ring { background: radial-gradient(circle,var(--surface) 57%,transparent 59%),conic-gradient(var(--positive) 0 86%,var(--border) 86%); }
+
+@media (max-width:700px) {
+  html { scrollbar-gutter: auto; scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
+  .app-shell { padding-inline: max(1rem,env(safe-area-inset-left),env(safe-area-inset-right)); }
+}
