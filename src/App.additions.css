@@ -12,7 +12,7 @@
   border-radius: 0.85rem;
   background: #ffffff05;
   color: var(--text-secondary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
   line-height: 1.65;
 }
 
@@ -31,7 +31,7 @@
   border-radius: 0.75rem;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition:
     border-color 160ms ease,
@@ -71,7 +71,7 @@
 .x-card-grid span,
 .x-matrix-best span {
   color: var(--text-secondary);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -79,7 +79,7 @@
 .x-meta-grid strong {
   overflow-wrap: anywhere;
   color: var(--text);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -121,7 +121,7 @@
 .x-card-head strong {
   overflow-wrap: anywhere;
   color: var(--text);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -129,7 +129,7 @@
 .x-matrix-best small,
 .x-matrix-suppliers small {
   color: var(--text-secondary);
-  font-size: 0.52rem;
+  font-size: 0.75rem;
 }
 
 .x-card-grid {
@@ -147,7 +147,7 @@
 .x-card-grid strong {
   color: var(--text);
   font-family: "Unbounded:Medium", system-ui, sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -198,7 +198,7 @@
   border-radius: 50%;
   background: #ffffff08;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   content: "⌄";
   transition: transform 160ms ease;
 }
@@ -289,7 +289,7 @@
 .x-store-list strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -297,7 +297,7 @@
 
 .x-store-list small {
   color: var(--text-secondary);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 .x-clickable {
@@ -343,7 +343,7 @@
 
 .x-detail-head strong {
   color: var(--text);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -403,7 +403,7 @@
 .x-detail-row strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -411,7 +411,7 @@
 
 .x-detail-row small {
   color: var(--text-secondary);
-  font-size: 0.5rem;
+  font-size: 0.75rem;
 }
 
 

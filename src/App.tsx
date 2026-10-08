@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
 import { createRequestCache } from "./request-cache";
+import { createRequestGate, mapSequential } from "./request-gate";
 
 type IconName =
   | "search"
@@ -303,6 +304,7 @@ function readStorage(key: string) {
 }
 
 const responseCache = createRequestCache();
+const requestGate = createRequestGate();
 
 async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -315,14 +317,14 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<
   const connectionId = readStorage(CONNECTION_KEY);
   if (connectionId) headers.set("X-Connection-ID", connectionId);
 
-  const load = async () => {
+  const load = () => requestGate.run(JSON.stringify([token, connectionId]), async () => {
     const timeout = AbortSignal.timeout(60_000);
     const response = await fetch(`${WORKER_URL}${path}`, { cache: "no-store", ...init, signal: timeout, headers });
     const payload = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (response.status === 401) throw new Error(payload?.error || "Сессия закончилась. Войдите снова.");
     if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload as T;
-  };
+  });
   const key = JSON.stringify([path, token, connectionId]);
   if ((init.method || "GET") !== "GET") return load();
   return responseCache.get<T>(key, load, init.signal);
@@ -343,7 +345,7 @@ async function fetchLiveStockForStore(storeName: string, options: RequestOptions
 }
 
 async function fetchLiveStockMerged(options: RequestOptions = {}): Promise<StockApiResponse> {
-  const payloads = await Promise.all(LIVE_STORES.map((store) => fetchLiveStockForStore(store.name, options)));
+  const payloads = await mapSequential(LIVE_STORES, (store) => fetchLiveStockForStore(store.name, options), options.signal);
   const merged = new Map<string, StockApiItem>();
 
   for (const payload of payloads) {
@@ -460,9 +462,7 @@ async function fetchTurnover(
   const store = findStore(warehouse);
   if (store) return fetchTurnoverForStore(store.name, from, to, options);
 
-  const payloads = await Promise.all(
-    LIVE_STORES.map((item) => fetchTurnoverForStore(item.name, from, to, options)),
-  );
+  const payloads = await mapSequential(LIVE_STORES, (item) => fetchTurnoverForStore(item.name, from, to, options), options.signal);
 
   return {
     ok: true,
@@ -1178,7 +1178,8 @@ function ProductCard({
 }) {
   const start = product.startQuantity ?? 0;
   const end = product.quantity ?? 0;
-  const delta = end - start;
+  const rawDelta = end - start;
+  const delta = Math.abs(rawDelta) < 0.0005 ? 0 : rawDelta;
   const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   const deltaLabel = `${deltaSign}${numberFormatter.format(Math.abs(delta))} ${product.unit}`.trim();
 
@@ -1204,8 +1205,7 @@ function ProductCard({
           <strong>{formatQuantity(product.startQuantity, product.unit)}</strong>
         </div>
         <div className="flow-arrow" aria-hidden="true">
-          <span />
-          <b>›</b>
+          <svg viewBox="0 0 48 24"><path d="M4 12h38m-6-6 6 6-6 6" /></svg>
         </div>
         <div className="metric metric-right">
           <span className="metric-label">{historical ? "Конец периода" : "Сейчас"}</span>
@@ -1216,7 +1216,7 @@ function ProductCard({
 
       <div className="change">
         <span>Изменение</span>
-        <b>{deltaLabel || "0"}</b>
+        <b className={delta < 0 ? "delta-negative" : delta > 0 ? "delta-positive" : "delta-neutral"}>{deltaLabel || "0"}</b>
         {product.balanceStatus !== "ok" && (
           <>
             <span>·</span>
@@ -2030,7 +2030,7 @@ function DocumentsPage({
             <Icon name="calendar" />
             <span>{formatRange(period)}</span>
           </button>
-          <button className="primary-page-action" type="button">
+          <button className="primary-page-action" type="button" disabled title="Создание документов пока доступно в iikoOffice">
             <Icon name="plus" />
             <span>Создать</span>
           </button>
@@ -2976,12 +2976,13 @@ export default function App() {
         </div>
 
         <button
+          aria-label="Номенклатура"
           className={activePage === "catalog" ? "active" : ""}
           onClick={() => setActivePage("catalog")}
           type="button"
         >
           <Icon name="inventory" />
-          <span className="nav-label">Номенклатура</span>
+          <span className="nav-label">Каталог</span>
         </button>
 
         <button
@@ -3040,6 +3041,11 @@ export default function App() {
         {dockSettingsOpen && (
           <div className="dock-settings">
             <strong>Настройки отображения</strong>
+
+            <button className="mobile-refresh" disabled={refreshing} onClick={refreshData} type="button">
+              <span>Обновить данные</span>
+              <Icon name="refresh" />
+            </button>
 
             <button onClick={() => setShowPrices((current) => !current)} type="button">
               <span>Показывать стоимость</span>
