@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
+import { createRequestCache } from "./request-cache";
 
 type IconName =
   | "search"
@@ -25,7 +26,7 @@ type DateRange = {
   end: Date;
 };
 
-const WORKER_URL = "https://iiko-miniapp-proxy.iiko-miniapp-proxy.workers.dev";
+const WORKER_URL = import.meta.env.DEV ? "/worker" : "https://iiko-miniapp-proxy.iiko-miniapp-proxy.workers.dev";
 
 const ALL_WAREHOUSES_LABEL = "Все склады";
 
@@ -282,6 +283,7 @@ function shortUuid(value: unknown) {
 }
 
 function errorMessage(error: unknown) {
+  if (error instanceof DOMException && error.name === "TimeoutError") return "Сервер не ответил за минуту. Повторите загрузку.";
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -300,6 +302,8 @@ function readStorage(key: string) {
   }
 }
 
+const responseCache = createRequestCache();
+
 async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
@@ -311,22 +315,17 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<
   const connectionId = readStorage(CONNECTION_KEY);
   if (connectionId) headers.set("X-Connection-ID", connectionId);
 
-  const response = await fetch(`${WORKER_URL}${path}`, { cache: "no-store", ...init, headers });
-
-  const payload = await response.json().catch(() => ({
-    ok: false,
-    error: `HTTP ${response.status}`,
-  }));
-
-  if (response.status === 401) {
-    throw new Error(payload?.error || "Сессия закончилась. Войдите снова.");
-  }
-
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error || `HTTP ${response.status}`);
-  }
-
-  return payload as T;
+  const load = async () => {
+    const timeout = AbortSignal.timeout(60_000);
+    const response = await fetch(`${WORKER_URL}${path}`, { cache: "no-store", ...init, signal: timeout, headers });
+    const payload = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (response.status === 401) throw new Error(payload?.error || "Сессия закончилась. Войдите снова.");
+    if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${response.status}`);
+    return payload as T;
+  };
+  const key = JSON.stringify([path, token, connectionId]);
+  if ((init.method || "GET") !== "GET") return load();
+  return responseCache.get<T>(key, load, init.signal);
 }
 
 function findStore(warehouse: string) {
@@ -1167,6 +1166,7 @@ function ProductCard({
   showPrices,
   compact,
   turnover,
+  historical = false,
 }: {
   product: StockApiItem;
   expanded: boolean;
@@ -1174,6 +1174,7 @@ function ProductCard({
   showPrices: boolean;
   compact: boolean;
   turnover?: TurnoverRow;
+  historical?: boolean;
 }) {
   const start = product.startQuantity ?? 0;
   const end = product.quantity ?? 0;
@@ -1199,7 +1200,7 @@ function ProductCard({
 
       <div className="comparison">
         <div className="metric">
-          <span className="metric-label">Начало периода</span>
+          <span className="metric-label">{historical ? "Начало периода" : "Начало дня"}</span>
           <strong>{formatQuantity(product.startQuantity, product.unit)}</strong>
         </div>
         <div className="flow-arrow" aria-hidden="true">
@@ -1207,7 +1208,7 @@ function ProductCard({
           <b>›</b>
         </div>
         <div className="metric metric-right">
-          <span className="metric-label">Конец периода</span>
+          <span className="metric-label">{historical ? "Конец периода" : "Сейчас"}</span>
           <strong>{formatQuantity(product.quantity, product.unit)}</strong>
           {showPrices && <span className="metric-cost">{formatMoney(product.endSum)}</span>}
         </div>
@@ -1258,6 +1259,11 @@ function ProductCard({
   );
 }
 
+function LoadMore({ count, total, onMore }: { count: number; total: number; onMore: () => void }) {
+  if (count >= total) return null;
+  return <button className="primary-page-action x-more" type="button" onClick={onMore}>Показать ещё · {Math.min(count, total)} из {total}</button>;
+}
+
 const NOMENCLATURE_FILTERS: [string, string][] = [
   ["all", "Все"],
   ["DISH", "Блюда"],
@@ -1281,6 +1287,7 @@ function NomenclaturePage({
   reloadToken: number;
 }) {
   const [query, setQuery] = useState("");
+  const [catalogCount, setCatalogCount] = useState(NOMENCLATURE_RENDER_LIMIT);
   const [typeFilter, setTypeFilter] = useState("all");
   const [openId, setOpenId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NomenclatureDetailState>>({});
@@ -1308,6 +1315,8 @@ function NomenclaturePage({
       .sort((a, b) => displayText(a.name).localeCompare(displayText(b.name), "ru"));
   }, [recipes, query, typeFilter]);
 
+  useEffect(() => { setCatalogCount(NOMENCLATURE_RENDER_LIMIT); }, [query, typeFilter]);
+
   const toggleRecipe = (id: string) => {
     if (openId === id) {
       setOpenId(null);
@@ -1315,7 +1324,7 @@ function NomenclaturePage({
     }
 
     setOpenId(id);
-    if (details[id]?.item) return;
+    if (details[id]?.item || details[id]?.loading) return;
 
     setDetails((prev) => ({ ...prev, [id]: { loading: true } }));
     fetchNomenclatureDetail(id)
@@ -1332,7 +1341,7 @@ function NomenclaturePage({
           <p className="eyebrow">Меню и технологические карты</p>
           <p className="page-title">Номенклатура</p>
         </div>
-        <button className="primary-page-action" type="button">
+        <button className="primary-page-action" type="button" disabled title="Создание рецептов пока доступно в iikoOffice">
           <Icon name="plus" />
           <span>Новый рецепт</span>
         </button>
@@ -1401,7 +1410,7 @@ function NomenclaturePage({
         <section className="recipe-list" aria-label="Номенклатура">
           {visibleRecipes.length ? (
             <>
-              {visibleRecipes.slice(0, NOMENCLATURE_RENDER_LIMIT).map((recipe) => {
+              {visibleRecipes.slice(0, catalogCount).map((recipe) => {
                 const isOpen = openId === recipe.id;
                 const state = details[recipe.id];
                 const full: NomenclatureItem = { ...recipe, ...(state?.item || {}) };
@@ -1410,7 +1419,7 @@ function NomenclaturePage({
 
                 return (
                   <article className={`recipe-card ${isOpen ? "is-expanded" : ""}`} key={recipe.id}>
-                    <button className="recipe-trigger" onClick={() => toggleRecipe(recipe.id)} type="button">
+                    <button className="recipe-trigger" aria-expanded={isOpen} onClick={() => toggleRecipe(recipe.id)} type="button">
                       <span className="recipe-icon">
                         <Icon name="recipe" />
                       </span>
@@ -1442,7 +1451,7 @@ function NomenclaturePage({
                             <div>
                               <b>
                                 Себестоимость:{" "}
-                                {Number.isFinite(Number(full.costPrice)) && full.costPrice !== undefined
+                                {Number.isFinite(Number(full.costPrice)) && full.costPrice != null
                                   ? formatPrice(Number(full.costPrice))
                                   : "—"}
                               </b>
@@ -1497,12 +1506,7 @@ function NomenclaturePage({
                 );
               })}
 
-              {visibleRecipes.length > NOMENCLATURE_RENDER_LIMIT && (
-                <div className="x-note">
-                  Показаны первые {NOMENCLATURE_RENDER_LIMIT} позиций из {visibleRecipes.length}. Используйте поиск или
-                  фильтр по типу.
-                </div>
-              )}
+              <LoadMore count={catalogCount} total={visibleRecipes.length} onMore={() => setCatalogCount((count) => count + NOMENCLATURE_RENDER_LIMIT)} />
             </>
           ) : (
             <div className="empty-state">
@@ -1561,6 +1565,8 @@ function DocumentsPage({
   reloadToken: number;
 }) {
   const [tab, setTab] = useState<DocumentsTab>("documents");
+  const [purchaseCount, setPurchaseCount] = useState(ANALYTICS_RENDER_LIMIT);
+  useEffect(() => { setPurchaseCount(ANALYTICS_RENDER_LIMIT); }, [tab, warehouse, period, reloadToken]);
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, DocumentDetailState>>({});
@@ -1698,7 +1704,7 @@ function DocumentsPage({
       );
     }
 
-    return rows.map((doc) => {
+    return rows.slice(0, purchaseCount).map((doc) => {
       const isOpen = expandedId === doc.id;
       const state = details[doc.id];
       const detail = state?.doc;
@@ -1889,7 +1895,7 @@ function DocumentsPage({
 
         {products.length ? (
           <div className="x-cards">
-            {products.slice(0, ANALYTICS_RENDER_LIMIT).map((product, index) => (
+            {products.slice(0, purchaseCount).map((product, index) => (
               <article className="x-card" key={`${product.code}-${product.name}-${index}`}>
                 <div className="x-card-head">
                   <strong>{product.name}</strong>
@@ -1934,9 +1940,7 @@ function DocumentsPage({
           </div>
         )}
 
-        {products.length > ANALYTICS_RENDER_LIMIT && (
-          <div className="x-note">Показаны первые {ANALYTICS_RENDER_LIMIT} товаров. Используйте поиск.</div>
-        )}
+        <LoadMore count={purchaseCount} total={products.length} onMore={() => setPurchaseCount((count) => count + ANALYTICS_RENDER_LIMIT)} />
       </>
     );
   };
@@ -1969,7 +1973,7 @@ function DocumentsPage({
 
         {matrixRows.length ? (
           <div className="x-cards">
-            {matrixRows.slice(0, ANALYTICS_RENDER_LIMIT).map((row, index) => (
+            {matrixRows.slice(0, purchaseCount).map((row, index) => (
               <details className="x-card x-matrix" key={`${row.code}-${row.name}-${index}`}>
                 <summary>
                   <div className="x-card-head">
@@ -2007,9 +2011,7 @@ function DocumentsPage({
           </div>
         )}
 
-        {matrixRows.length > ANALYTICS_RENDER_LIMIT && (
-          <div className="x-note">Показаны первые {ANALYTICS_RENDER_LIMIT} товаров. Используйте поиск.</div>
-        )}
+        <LoadMore count={purchaseCount} total={matrixRows.length} onMore={() => setPurchaseCount((count) => count + ANALYTICS_RENDER_LIMIT)} />
       </>
     );
   };
@@ -2098,6 +2100,7 @@ function DocumentsPage({
             <small>{rows.length} документов</small>
           </div>
           {renderDocumentList()}
+          <LoadMore count={purchaseCount} total={rows.length} onMore={() => setPurchaseCount((count) => count + ANALYTICS_RENDER_LIMIT)} />
         </section>
       )}
 
@@ -2181,7 +2184,8 @@ function AnalyticsPage({
   const stores = dashboard?.stores || [];
   const problemCount =
     Number(summary.negativeCount || 0) + Number(summary.ranOutCount || 0) + Number(summary.reconciliationCount || 0);
-  const healthPercent = Math.max(0, 100 - (Number(summary.negativeCount || 0) + Number(summary.ranOutCount || 0)) * 5);
+  const productRows = Number(summary.productRows || 0);
+  const healthPercent = productRows > 0 ? Math.round(100 * Math.max(0, 1 - Number(summary.negativeCount || 0) / productRows)) : null;
 
   const attentionRows: DashboardRow[] =
     attention === "negative"
@@ -2356,15 +2360,15 @@ function AnalyticsPage({
               </div>
 
               <div className="health-ring">
-                <strong>{healthPercent}%</strong>
-                <span>в норме</span>
+                <strong>{healthPercent === null ? "—" : `${healthPercent}%`}</strong>
+                <span>без отрицательного остатка</span>
               </div>
 
               <div className="health-legend">
                 <div>
                   <i className="healthy" />
-                  <span>В норме</span>
-                  <b>{healthPercent}</b>
+                  <span>Без отрицательного остатка</span>
+                  <b>{Math.max(0, productRows - Number(summary.negativeCount || 0))}</b>
                 </div>
                 <div>
                   <i className="low" />
@@ -2581,6 +2585,8 @@ export default function App() {
   const [stockMeta, setStockMeta] = useState<{ time: string; cached: boolean } | null>(null);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
+  const [turnoverError, setTurnoverError] = useState<string | null>(null);
+  const [turnoverLoading, setTurnoverLoading] = useState(false);
   const [turnoverData, setTurnoverData] = useState<TurnoverRow[]>([]);
 
   const [documentsData, setDocumentsData] = useState<IncomingListResponse | null>(null);
@@ -2654,6 +2660,8 @@ export default function App() {
     const forceRefresh = reloadToken > loadedToken.current.turnover;
 
     setTurnoverData([]);
+    setTurnoverError(null);
+    setTurnoverLoading(true);
 
     fetchTurnover(from, to, warehouse, { signal: controller.signal, forceRefresh })
       .then((payload) => {
@@ -2662,8 +2670,9 @@ export default function App() {
         setTurnoverData(payload.rows || []);
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) console.error("Turnover error:", error);
-      });
+        if (!controller.signal.aborted) setTurnoverError(errorMessage(error));
+      })
+      .finally(() => { if (!controller.signal.aborted) setTurnoverLoading(false); });
 
     return () => controller.abort();
   }, [activePage, warehouse, from, to, reloadToken]);
@@ -2731,6 +2740,7 @@ export default function App() {
 
     setDashboardLoading(true);
     setDashboardError(null);
+    setDashboardData(null);
 
     fetchDashboard(from, to, warehouse, { signal: controller.signal, forceRefresh })
       .then((payload) => {
@@ -2800,6 +2810,7 @@ export default function App() {
 
   const refreshData = () => {
     if (refreshing) return;
+    responseCache.clear();
     setReloadToken((token) => token + 1);
   };
 
@@ -2884,6 +2895,9 @@ export default function App() {
               </span>
             </section>
 
+            {turnoverLoading && <div className="x-note" role="status">Загружаем движения за выбранный период…</div>}
+            {turnoverError && <div className="x-note" role="alert">Движения за период недоступны: {turnoverError}. Повторите загрузку кнопкой «Обновить».</div>}
+
             {stockError && (
               <div className="empty-state" role="alert">
                 <strong>Не удалось загрузить остатки</strong>
@@ -2902,7 +2916,7 @@ export default function App() {
                   <b>{formatTime(stockMeta?.time)}</b>
                 </div>
                 <div className="summary-end">
-                  <span>Сумма остатка</span>
+                  <span>Текущий остаток</span>
                   <strong>{formatMoney(stockTotals.endSum)}</strong>
                 </div>
               </section>
@@ -2912,6 +2926,7 @@ export default function App() {
               <section className="list" aria-label="Остатки товаров">
                 {filteredProducts.slice(0, visibleCount).map((product, index) => {
                   const key = stockKey(product);
+                  const report = turnoverIndex(product);
 
                   return (
                     <ProductCard
@@ -2919,9 +2934,10 @@ export default function App() {
                       expanded={expanded === key}
                       key={`${key}-${index}`}
                       onToggle={() => setExpanded(expanded === key ? null : key)}
-                      product={product}
+                      historical={!!report}
+                      product={report ? { ...product, startQuantity: report.openQty ?? null, quantity: report.closeQty ?? null, endSum: report.closeAmt ?? null, balanceStatus: "ok" } : product}
                       showPrices={showPrices}
-                      turnover={expanded === key ? turnoverIndex(product) : undefined}
+                      turnover={expanded === key ? report : undefined}
                     />
                   );
                 })}
