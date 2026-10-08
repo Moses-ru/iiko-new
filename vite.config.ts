@@ -6,6 +6,16 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/iiko-new/",
+  server: {
+    proxy: {
+      "/worker": {
+        target: "https://iiko-miniapp-proxy.iiko-miniapp-proxy.workers.dev",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/worker/, ""),
+        headers: { Origin: "https://moses-ru.github.io" },
+      },
+    },
+  },
   build: {
     outDir: "dist",
   },
