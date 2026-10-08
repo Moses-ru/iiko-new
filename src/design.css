@@ -155,3 +155,18 @@ body { background: var(--page-bg); color: var(--text); }
   html::-webkit-scrollbar { display: none; }
   .app-shell { padding-inline: max(1rem,env(safe-area-inset-left),env(safe-area-inset-right)); }
 }
+
+.nav-icon-frame { display: grid; place-items: center; flex: none; width: 2.125rem; height: 2.125rem; border-radius: .8rem; transition: background 160ms ease, color 160ms ease; }
+.nav-icon { display: block; width: 1.5rem; height: 1.5rem; }
+.nav-settings-label { display: none; }
+.bottom-nav > button:focus-visible { outline: 2px solid var(--positive); outline-offset: 2px; }
+@media (max-width:700px) {
+  .bottom-nav { grid-template-columns: repeat(5,minmax(0,1fr)); gap: .125rem; padding: .4rem; }
+  .bottom-nav > button, .bottom-nav > .dock-action { min-height: 3.625rem; gap: .15rem; align-self: stretch; border-radius: .9rem; }
+  .bottom-nav > button.active, .bottom-nav > .dock-action.active { background: transparent; color: var(--positive); }
+  .bottom-nav > button.active .nav-icon-frame { background: var(--accent-soft); }
+  .bottom-nav > button.active .nav-label { font-weight: 650; }
+  .bottom-nav .nav-label { font-size: .625rem; line-height: 1.35; letter-spacing: .01em; }
+  .nav-settings-label { display: block; }
+}
+@media (prefers-reduced-motion:reduce) { .nav-icon-frame { transition: none; } }

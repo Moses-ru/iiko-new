@@ -1,3 +1,4 @@
+import { NavigationIcon } from "./NavigationIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
 import { createRequestCache } from "./request-cache";
@@ -2974,7 +2975,7 @@ export default function App() {
       <nav className="bottom-nav" aria-label="Основная навигация">
         <div className="dock-brand" aria-hidden="true">
           <span>
-            <Icon name="database" />
+            <NavigationIcon name="stock" />
           </span>
           <div>
             <strong>Склад</strong>
@@ -2984,38 +2985,42 @@ export default function App() {
 
         <button
           aria-label="Номенклатура"
+          aria-current={activePage === "catalog" ? "page" : undefined}
           className={activePage === "catalog" ? "active" : ""}
           onClick={() => setActivePage("catalog")}
           type="button"
         >
-          <Icon name="inventory" />
+          <NavigationIcon name="catalog" />
           <span className="nav-label">Каталог</span>
         </button>
 
         <button
+          aria-current={activePage === "stock" ? "page" : undefined}
           className={activePage === "stock" ? "active" : ""}
           onClick={() => setActivePage("stock")}
           type="button"
         >
-          <Icon name="database" />
+          <NavigationIcon name="stock" />
           <span className="nav-label">Остатки</span>
         </button>
 
         <button
+          aria-current={activePage === "documents" ? "page" : undefined}
           className={activePage === "documents" ? "active" : ""}
           onClick={() => setActivePage("documents")}
           type="button"
         >
-          <Icon name="document" />
+          <NavigationIcon name="documents" />
           <span className="nav-label">Документы</span>
         </button>
 
         <button
+          aria-current={activePage === "reports" ? "page" : undefined}
           className={activePage === "reports" ? "active" : ""}
           onClick={() => setActivePage("reports")}
           type="button"
         >
-          <Icon name="chart" />
+          <NavigationIcon name="reports" />
           <span className="nav-label">Аналитика</span>
         </button>
 
@@ -3042,7 +3047,8 @@ export default function App() {
           title="Настройки"
           type="button"
         >
-          <Icon name="settings" />
+          <NavigationIcon name="settings" />
+          <span className="nav-label nav-settings-label">Настройки</span>
         </button>
 
         {dockSettingsOpen && (
