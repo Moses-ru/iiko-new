@@ -1,6 +1,9 @@
+import { NavigationIcon } from "./NavigationIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
 import { createRequestCache } from "./request-cache";
+import { createRequestGate, mapSequential } from "./request-gate";
+import { catalogPrice } from "./catalog-price";
 
 type IconName =
   | "search"
@@ -179,7 +182,11 @@ type NomenclatureItem = {
   type?: string;
   unit?: string;
   menuPrice?: number;
+  menuPriceStatus?: string;
   costPrice?: number;
+  assembledAmount?: number;
+  warning?: string;
+  priceWarning?: string;
   technology?: string;
   recipeDateFrom?: string;
   recipeDateTo?: string;
@@ -303,6 +310,7 @@ function readStorage(key: string) {
 }
 
 const responseCache = createRequestCache();
+const requestGate = createRequestGate();
 
 async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -315,14 +323,14 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<
   const connectionId = readStorage(CONNECTION_KEY);
   if (connectionId) headers.set("X-Connection-ID", connectionId);
 
-  const load = async () => {
+  const load = () => requestGate.run(JSON.stringify([token, connectionId]), async () => {
     const timeout = AbortSignal.timeout(60_000);
     const response = await fetch(`${WORKER_URL}${path}`, { cache: "no-store", ...init, signal: timeout, headers });
     const payload = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (response.status === 401) throw new Error(payload?.error || "Сессия закончилась. Войдите снова.");
     if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload as T;
-  };
+  });
   const key = JSON.stringify([path, token, connectionId]);
   if ((init.method || "GET") !== "GET") return load();
   return responseCache.get<T>(key, load, init.signal);
@@ -343,7 +351,7 @@ async function fetchLiveStockForStore(storeName: string, options: RequestOptions
 }
 
 async function fetchLiveStockMerged(options: RequestOptions = {}): Promise<StockApiResponse> {
-  const payloads = await Promise.all(LIVE_STORES.map((store) => fetchLiveStockForStore(store.name, options)));
+  const payloads = await mapSequential(LIVE_STORES, (store) => fetchLiveStockForStore(store.name, options), options.signal);
   const merged = new Map<string, StockApiItem>();
 
   for (const payload of payloads) {
@@ -460,9 +468,7 @@ async function fetchTurnover(
   const store = findStore(warehouse);
   if (store) return fetchTurnoverForStore(store.name, from, to, options);
 
-  const payloads = await Promise.all(
-    LIVE_STORES.map((item) => fetchTurnoverForStore(item.name, from, to, options)),
-  );
+  const payloads = await mapSequential(LIVE_STORES, (item) => fetchTurnoverForStore(item.name, from, to, options), options.signal);
 
   return {
     ok: true,
@@ -772,6 +778,7 @@ function displayText(value: unknown, fallback = ""): string {
 
 /* Количества в техкарте приходят в основной единице: кг → г, л → мл */
 function recipeMeasure(value: unknown, unit?: string) {
+  if (value == null || value === "") return "—";
   const n = Number(value ?? 0);
   const rawUnit = String(unit || "").trim();
   const u = rawUnit.toLocaleLowerCase("ru-RU").replace(/\./g, "").replace(/\s+/g, " ").trim();
@@ -1178,7 +1185,8 @@ function ProductCard({
 }) {
   const start = product.startQuantity ?? 0;
   const end = product.quantity ?? 0;
-  const delta = end - start;
+  const rawDelta = end - start;
+  const delta = Math.abs(rawDelta) < 0.0005 ? 0 : rawDelta;
   const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   const deltaLabel = `${deltaSign}${numberFormatter.format(Math.abs(delta))} ${product.unit}`.trim();
 
@@ -1204,8 +1212,7 @@ function ProductCard({
           <strong>{formatQuantity(product.startQuantity, product.unit)}</strong>
         </div>
         <div className="flow-arrow" aria-hidden="true">
-          <span />
-          <b>›</b>
+          <svg viewBox="0 0 48 24"><path d="M4 12h38m-6-6 6 6-6 6" /></svg>
         </div>
         <div className="metric metric-right">
           <span className="metric-label">{historical ? "Конец периода" : "Сейчас"}</span>
@@ -1216,7 +1223,7 @@ function ProductCard({
 
       <div className="change">
         <span>Изменение</span>
-        <b>{deltaLabel || "0"}</b>
+        <b className={delta < 0 ? "delta-negative" : delta > 0 ? "delta-positive" : "delta-neutral"}>{deltaLabel || "0"}</b>
         {product.balanceStatus !== "ok" && (
           <>
             <span>·</span>
@@ -1290,6 +1297,7 @@ function NomenclaturePage({
   const [catalogCount, setCatalogCount] = useState(NOMENCLATURE_RENDER_LIMIT);
   const [typeFilter, setTypeFilter] = useState("all");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [recipeFactor, setRecipeFactor] = useState(1);
   const [details, setDetails] = useState<Record<string, NomenclatureDetailState>>({});
 
   // После ручного обновления карточки подгружаются заново
@@ -1324,6 +1332,7 @@ function NomenclaturePage({
     }
 
     setOpenId(id);
+    setRecipeFactor(1);
     if (details[id]?.item || details[id]?.loading) return;
 
     setDetails((prev) => ({ ...prev, [id]: { loading: true } }));
@@ -1416,6 +1425,7 @@ function NomenclaturePage({
                 const full: NomenclatureItem = { ...recipe, ...(state?.item || {}) };
                 const ingredients = full.ingredients || [];
                 const isGoods = full.type === "GOODS";
+                const price = catalogPrice(full);
 
                 return (
                   <article className={`recipe-card ${isOpen ? "is-expanded" : ""}`} key={recipe.id}>
@@ -1424,16 +1434,9 @@ function NomenclaturePage({
                         <Icon name="recipe" />
                       </span>
                       <span className="recipe-name">
-                        <small>{recipe.category || ruProductType(recipe.type)}</small>
+                        <small className="recipe-type">{recipe.category || ruProductType(recipe.type)}</small>
                         <strong>{displayText(recipe.name, "Без названия")}</strong>
-                      </span>
-                      <span className="recipe-yield">
-                        <small>Выход</small>
-                        <strong>{recipe.unit || "шт"}</strong>
-                      </span>
-                      <span className="recipe-cost">
-                        <small>Цена</small>
-                        <strong>{recipe.menuPrice ? formatPrice(recipe.menuPrice) : "—"}</strong>
+                        <span className="recipe-price"><span>{price.label}</span><b>{price.value === null ? "Нет данных" : formatPrice(price.value)}</b></span>
                       </span>
                       <span className="chevron">
                         <Icon name="chevron" />
@@ -1442,60 +1445,60 @@ function NomenclaturePage({
 
                     {isOpen && (
                       <div className="recipe-details">
-                        {state?.loading && <span>Открываем техкарту…</span>}
-                        {state?.error && <span>{state.error}</span>}
+                        {state?.loading && <p className="recipe-status" role="status">Открываем техкарту…</p>}
+                        {state?.error && <p className="recipe-status" role="alert">Не удалось загрузить карточку: {state.error}</p>}
 
                         {state?.item && (
                           <>
-                            <span>Информация · {ruProductType(full.type)}</span>
-                            <div>
-                              <b>
-                                Себестоимость:{" "}
+                            <div className="recipe-facts">
+                              <div><span>Себестоимость</span><strong>
                                 {Number.isFinite(Number(full.costPrice)) && full.costPrice != null
                                   ? formatPrice(Number(full.costPrice))
-                                  : "—"}
-                              </b>
-                              {full.menuPrice ? <b>Цена меню: {formatPrice(full.menuPrice)}</b> : null}
+                                  : "Нет данных"}
+                              </strong></div>
+                              <div><span>Цена меню</span><strong>{catalogPrice({ menuPrice: full.menuPrice, menuPriceStatus: full.menuPriceStatus }).value === null ? "Нет данных" : formatPrice(full.menuPrice)}</strong></div>
+                              {!isGoods && <div><span>Базовый выход</span><strong>{recipeMeasure(full.assembledAmount, full.unit)}</strong></div>}
+                            </div>
+                            <div className="recipe-caption">
+                              <span>{ruProductType(full.type)} · {full.code || full.num || full.id}</span>
                               {(full.recipeDateFrom || full.recipeDateTo) && (
-                                <b>
-                                  Техкарта: {shortRecipeDate(full.recipeDateFrom)} — {shortRecipeDate(full.recipeDateTo)}
-                                </b>
+                                <span>Действует: {shortRecipeDate(full.recipeDateFrom)} — {shortRecipeDate(full.recipeDateTo)}</span>
                               )}
                             </div>
+                            {(full.warning || full.priceWarning) && <p className="recipe-status" role="status">{full.warning || full.priceWarning}</p>}
 
                             {ingredients.length > 0 ? (
                               <>
-                                <span>Состав · {ingredients.length} ингредиентов</span>
-                                <div>
+                                <div className="recipe-section-heading">
+                                  <div><h2>Состав рецепта</h2><span>Ингредиентов: {ingredients.length}</span></div>
+                                  <label className="recipe-scale">Количество рецептов<select aria-label="Количество рецептов" value={recipeFactor} onChange={(event) => setRecipeFactor(Number(event.target.value))}><option value={1}>× 1</option><option value={2}>× 2</option><option value={5}>× 5</option><option value={10}>× 10</option></select></label>
+                                </div>
+                                <div className="ingredient-table" role="table" aria-label="Состав техкарты">
+                                  <div className="ingredient-head" role="row"><span role="columnheader">Ингредиент</span><span role="columnheader">Брутто</span><span role="columnheader">Нетто</span><span role="columnheader">Выход</span></div>
                                   {ingredients.map((ing, idx) => (
-                                    <b key={`${ing.productId || "ing"}-${idx}`}>
-                                      {displayText(ing.name, ing.productId || "Ингредиент")} — брутто{" "}
-                                      {recipeMeasure(ing.gross ?? ing.amount ?? 0, ing.unit)} · нетто{" "}
-                                      {recipeMeasure(ing.net ?? 0, ing.unit)} · выход{" "}
-                                      {recipeMeasure(ing.out ?? 0, ing.unit)}
-                                    </b>
+                                    <div className="ingredient-row" role="row" key={`${ing.productId || "ing"}-${idx}`}>
+                                      <span role="cell" className="ingredient-name"><i>{idx + 1}</i><strong>{displayText(ing.name, ing.productId || "Ингредиент")}</strong></span>
+                                      {[ing.gross ?? ing.amount, ing.net, ing.out].map((value, index) => <span role="cell" className="ingredient-quantity" key={index}><small>{["Брутто", "Нетто", "Выход"][index]}</small><b>{recipeMeasure(value == null ? undefined : value * recipeFactor, ing.unit)}</b></span>)}
+                                    </div>
                                   ))}
                                 </div>
+                                {recipeFactor > 1 && <p className="recipe-caption">Выход для × {recipeFactor}: {recipeMeasure(full.assembledAmount == null ? undefined : full.assembledAmount * recipeFactor, full.unit)}. Цены выше указаны для базового рецепта.</p>}
                               </>
                             ) : (
                               <>
-                                <span>{isGoods ? "Техкарта не требуется" : "Состав не найден"}</span>
-                                <div>
-                                  <b>
+                                <div className="recipe-status">
+                                  <strong>{isGoods ? "Техкарта не требуется" : "Состав не найден"}</strong><p>
                                     {isGoods
                                       ? "Это товар: показываются карточка номенклатуры и себестоимость."
                                       : "iikoOffice не вернул строки действующей техкарты."}
-                                  </b>
+                                  </p>
                                 </div>
                               </>
                             )}
 
                             {full.technology && (
                               <>
-                                <span>Технология приготовления</span>
-                                <div>
-                                  <b className="x-pre-line">{full.technology}</b>
-                                </div>
+                                <section className="recipe-technology"><h2>Технология приготовления</h2><p>{full.technology}</p></section>
                               </>
                             )}
                           </>
@@ -2030,7 +2033,7 @@ function DocumentsPage({
             <Icon name="calendar" />
             <span>{formatRange(period)}</span>
           </button>
-          <button className="primary-page-action" type="button">
+          <button className="primary-page-action" type="button" disabled title="Создание документов пока доступно в iikoOffice">
             <Icon name="plus" />
             <span>Создать</span>
           </button>
@@ -2576,6 +2579,11 @@ export default function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [showPrices, setShowPrices] = useState(true);
   const [compactCards, setCompactCards] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() => readStorage("iiko-display-theme") === "light" ? "light" : "dark");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("iiko-display-theme", theme); } catch { /* Storage is optional. */ }
+  }, [theme]);
   const [dockSettingsOpen, setDockSettingsOpen] = useState(false);
 
   // Каждое нажатие «Обновить» увеличивает токен: данные перезагружаются без кэша
@@ -2967,7 +2975,7 @@ export default function App() {
       <nav className="bottom-nav" aria-label="Основная навигация">
         <div className="dock-brand" aria-hidden="true">
           <span>
-            <Icon name="database" />
+            <NavigationIcon name="stock" />
           </span>
           <div>
             <strong>Склад</strong>
@@ -2976,38 +2984,43 @@ export default function App() {
         </div>
 
         <button
+          aria-label="Номенклатура"
+          aria-current={activePage === "catalog" ? "page" : undefined}
           className={activePage === "catalog" ? "active" : ""}
           onClick={() => setActivePage("catalog")}
           type="button"
         >
-          <Icon name="inventory" />
-          <span className="nav-label">Номенклатура</span>
+          <NavigationIcon name="catalog" />
+          <span className="nav-label">Каталог</span>
         </button>
 
         <button
+          aria-current={activePage === "stock" ? "page" : undefined}
           className={activePage === "stock" ? "active" : ""}
           onClick={() => setActivePage("stock")}
           type="button"
         >
-          <Icon name="database" />
+          <NavigationIcon name="stock" />
           <span className="nav-label">Остатки</span>
         </button>
 
         <button
+          aria-current={activePage === "documents" ? "page" : undefined}
           className={activePage === "documents" ? "active" : ""}
           onClick={() => setActivePage("documents")}
           type="button"
         >
-          <Icon name="document" />
+          <NavigationIcon name="documents" />
           <span className="nav-label">Документы</span>
         </button>
 
         <button
+          aria-current={activePage === "reports" ? "page" : undefined}
           className={activePage === "reports" ? "active" : ""}
           onClick={() => setActivePage("reports")}
           type="button"
         >
-          <Icon name="chart" />
+          <NavigationIcon name="reports" />
           <span className="nav-label">Аналитика</span>
         </button>
 
@@ -3034,12 +3047,23 @@ export default function App() {
           title="Настройки"
           type="button"
         >
-          <Icon name="settings" />
+          <NavigationIcon name="settings" />
+          <span className="nav-label nav-settings-label">Настройки</span>
         </button>
 
         {dockSettingsOpen && (
           <div className="dock-settings">
             <strong>Настройки отображения</strong>
+
+            <div className="theme-picker" role="group" aria-label="Тема оформления">
+              <span>Тема оформления</span>
+              <div><button type="button" aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}>Тёмная</button><button type="button" aria-pressed={theme === "light"} onClick={() => setTheme("light")}>Светлая</button></div>
+            </div>
+
+            <button className="mobile-refresh" disabled={refreshing} onClick={refreshData} type="button">
+              <span>Обновить данные</span>
+              <Icon name="refresh" />
+            </button>
 
             <button onClick={() => setShowPrices((current) => !current)} type="button">
               <span>Показывать стоимость</span>

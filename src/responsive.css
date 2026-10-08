@@ -1,0 +1,92 @@
+/* Shared geometry and readable text for compact screens. */
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { min-width: 0; }
+.mobile-refresh { display: none !important; }
+button, input { font-family: inherit; }
+.icon { display: block; }
+.chevron { flex: 0 0 2.5rem; }
+.chevron .icon, .warehouse-button .icon-chevron { width: 1rem; height: 1rem; }
+.primary-page-action .icon, .document-mark .icon { height: 1.25rem; width: 1.25rem; }
+.card-title { min-width: 0; }
+.flow-arrow { justify-content: center; }
+.flow-arrow svg { width: 2.5rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.comparison { grid-template-columns: minmax(0, 1fr) 3rem minmax(0, 1fr); align-items: start; }
+.flow-arrow { padding-top: 1.25rem; }
+.metric strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.summary > div, .document-main, .analytics-kpis article, .header-actions { min-width: 0; }
+.summary strong { overflow-wrap: anywhere; }
+.change .delta-negative { color: var(--negative); }
+.change .delta-positive { color: var(--positive); }
+.change .delta-neutral { color: var(--text-secondary); }
+.period-button, .primary-page-action { flex-shrink: 0; white-space: nowrap; }
+.search-field { min-width: 0; }
+.topbar, .section-topbar { margin-top: 0; align-items: center; }
+
+@media (max-width: 700px) {
+  .app-shell { padding: max(1.25rem, env(safe-area-inset-top)) 1rem calc(6.5rem + env(safe-area-inset-bottom)); }
+  .topbar, .section-topbar { margin-bottom: 1.25rem; gap: .75rem; padding: 0; }
+  .page-title { font-size: 1.5rem; line-height: 1.25; }
+  .header-actions { flex-wrap: wrap; gap: .5rem; }
+  .period-button, .primary-page-action { min-height: 2.75rem; padding: 0 .75rem; font-size: .8rem; }
+  .toolbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+  .search-field { min-height: 3rem; border-radius: .875rem; }
+  .search-field input { font-size: 1rem; }
+  .results-count { width: auto; font-size: .75rem; padding-left: .25rem; }
+  .workspace-actions { margin-bottom: .75rem; }
+  .warehouse-button { min-height: 3.5rem; }
+  .warehouse-button small { font-size: .75rem; }
+  .warehouse-button strong { font-size: .875rem; }
+  .summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: .75rem; border-radius: 1rem; }
+  .summary .summary-change { grid-column: 1 / -1; grid-row: 2; flex-direction: row; justify-content: flex-start; padding: .75rem 0 0; border-inline: 0; border-top: 1px solid var(--border-soft); }
+  .summary span, .summary-change b { font-size: .75rem; }
+  .summary strong { font-family: inherit; font-size: 1.05rem; }
+  .summary-end strong { white-space: nowrap; }
+  .list { gap: .75rem; }
+  .product-card, .recipe-card { border-radius: 1rem; }
+  .card-trigger { padding: .75rem .75rem .5rem 1rem; gap: .5rem; }
+  .card-title { font-family: inherit; font-size: .875rem; white-space: normal; overflow-wrap: anywhere; line-height: 1.45; }
+  .comparison { padding: 0 1rem .75rem; }
+  .metric-label, .metric-cost, .change { font-size: .75rem; }
+  .metric strong { font-family: inherit; font-size: 1.2rem; line-height: 1.3; }
+  .change { flex-wrap: wrap; padding-bottom: 1rem; }
+  .details div { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); font-size: .8rem; gap: .5rem; }
+  .details b { overflow-wrap: anywhere; text-align: right; }
+  .details small { grid-column: 1 / -1; text-align: left; }
+  .bottom-nav { width: calc(100% - 1.5rem); bottom: max(.75rem, env(safe-area-inset-bottom)); grid-template-columns: repeat(4, minmax(0, 1fr)) 2.75rem; gap: .125rem; padding: .375rem; border-radius: 1rem; }
+  .bottom-nav > .dock-action[aria-label="Обновить данные"] { display: none; }
+  .dock-settings .mobile-refresh { display: flex !important; }
+  .bottom-nav > button { min-height: 3.25rem; padding: 0; gap: .3rem; }
+  .bottom-nav .nav-label { font-size: .625rem; line-height: 1.2; white-space: nowrap; }
+  .bottom-nav .icon { width: 1.25rem; height: 1.25rem; }
+  .bottom-nav .dock-action { min-height: 2.75rem; }
+  .dock-divider { display: none; }
+  .dock-settings { right: 0; max-width: calc(100vw - 1.5rem); }
+  .recipe-trigger { padding: .75rem; gap: .75rem; }
+  .recipe-icon { width: 2.5rem; height: 2.5rem; }
+  .recipe-name strong { font-size: .875rem; white-space: normal; line-height: 1.4; }
+  .catalog-stats span, .recipe-card small, .filter-chips button { font-size: .75rem; }
+  .filter-chips button { min-height: 2.75rem; flex-shrink: 0; }
+  .document-summary > div { padding: 1rem; }
+  .document-summary span, .document-summary small, .document-main small, .document-main span { font-size: .75rem; }
+  .document-main strong { font-size: .875rem; overflow-wrap: anywhere; }
+  .document-card { gap: .625rem; padding: .75rem; }
+  .document-mark { width: 2.5rem; height: 2.5rem; }
+  .document-menu { width: 2.75rem; height: 2.75rem; }
+  .document-item__name strong { font-size: .875rem; }
+  .document-item__qty strong, .document-item__cost strong, .document-item__sum { font-size: .8rem; }
+  .analytics-kpis { grid-template-columns: minmax(0, 1fr); }
+  .analytics-kpis article:first-child { grid-column: auto; }
+  .analytics-kpis span, .analytics-kpis small, .analytics-heading span, .analytics-heading small { font-size: .75rem; }
+  .calendar-dialog { max-height: 90dvh; overflow-y: auto; }
+  .calendar-dialog button { min-height: 2.75rem; }
+}
+
+@media (max-width: 380px) {
+  .summary .summary-change { display: flex !important; }
+  .app-shell { padding-inline: .75rem; }
+}
+
+@media (min-width: 701px) and (max-width: 960px) {
+  .auth-page { display: block; }
+  .auth-aside { display: none; }
+}
