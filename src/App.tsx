@@ -2243,7 +2243,7 @@ function AnalyticsPage({
       {dashboard && loading && <p className="refresh-note" role="status">Обновляем показатели… Текущие данные остаются на экране.</p>}
       {dashboard && error && <p className="refresh-note">Показаны ранее загруженные данные.</p>}
       {dashboard && (
-        <>
+        <div className="analytics-content">
           <section className="analytics-kpis" aria-label="Ключевые показатели">
             <article>
               <span>Запасы сейчас</span>
@@ -2436,7 +2436,7 @@ function AnalyticsPage({
             iikoOffice ОСВ · {numberFormatter.format(summary.productRows || 0)} строк ·{" "}
             {dashboard.cache?.cached ? "из кэша" : `${numberFormatter.format(dashboard.performance?.totalMs || 0)} мс`}
           </div>
-        </>
+        </div>
       )}
     </>
   );

@@ -198,7 +198,11 @@ body { background: var(--page-bg); color: var(--text); }
 .warehouse-share .warehouse-problems { color: var(--negative); margin-top: .15rem; }
 .chart-footnote, .refresh-note { font-size: .75rem; color: var(--text-muted); line-height: 1.6; margin: 1rem 0 0; }
 .refresh-note { margin: .75rem 0; }
+.analytics-content { display: grid; gap: 1.25rem; min-width: 0; }
+.analytics-content > * { margin-block: 0; min-width: 0; }
+.analytics-content .inventory-insights, .analytics-content .analytics-grid { gap: 1.25rem; }
 @media(max-width:700px) {
+  .analytics-content, .analytics-content .inventory-insights, .analytics-content .analytics-grid { gap: 1rem; }
   .inventory-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .625rem; }
   .inventory-metrics article { padding: 1rem; }
   .inventory-metrics article:last-child { grid-column: 1 / -1; }
