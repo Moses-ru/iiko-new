@@ -1,3 +1,5 @@
+import { InventoryInsights } from "./InventoryInsights";
+import { inventoryMetrics, warehouseShares } from "./analytics-model";
 import { NavigationIcon } from "./NavigationIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
@@ -181,12 +183,13 @@ type NomenclatureItem = {
   category?: string;
   type?: string;
   unit?: string;
-  menuPrice?: number;
+  menuPrice?: number | null;
   menuPriceStatus?: string;
-  costPrice?: number;
+  costPrice?: number | null;
   assembledAmount?: number;
   warning?: string;
   priceWarning?: string;
+  pricesDeferred?: boolean;
   technology?: string;
   recipeDateFrom?: string;
   recipeDateTo?: string;
@@ -333,7 +336,8 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<
   });
   const key = JSON.stringify([path, token, connectionId]);
   if ((init.method || "GET") !== "GET") return load();
-  return responseCache.get<T>(key, load, init.signal);
+  const ttl = path.startsWith("/api/nomenclature") ? 5 * 60_000 : /\/api\/(dashboard|documents)/.test(path) ? 2 * 60_000 : 30_000;
+  return responseCache.get<T>(key, load, init.signal, ttl);
 }
 
 function findStore(warehouse: string) {
@@ -488,6 +492,7 @@ function fetchIncomingDocuments(from: string, to: string, warehouse: string, opt
     to,
     storeId: findStore(warehouse)?.id || "__ALL__",
   });
+  if (options.forceRefresh) params.set("_", String(Date.now()));
   return apiFetch<IncomingListResponse>(`/api/documents/incoming?${params.toString()}`, {
     signal: options.signal,
   });
@@ -747,12 +752,16 @@ async function fetchSupplierMatrix(
 /* ------------------------------------------------------------------ */
 
 async function fetchNomenclature(options: RequestOptions = {}): Promise<NomenclatureItem[]> {
-  const suffix = options.forceRefresh ? "?refresh=1" : "";
+  const suffix = options.forceRefresh ? "?includePrices=0&refresh=1" : "?includePrices=0";
   const payload = await apiFetch<{ items?: NomenclatureItem[]; dishes?: NomenclatureItem[] }>(
     `/api/nomenclature${suffix}`,
     { signal: options.signal },
   );
   return payload.items || payload.dishes || [];
+}
+
+async function fetchNomenclaturePrices(options: RequestOptions = {}) {
+  return apiFetch<{ prices: { menu: [string, number][]; costs: [string, number][]; warning?: string } }>("/api/nomenclature?pricesOnly=1", { signal: options.signal });
 }
 
 async function fetchNomenclatureDetail(productId: string, options: RequestOptions = {}): Promise<NomenclatureItem> {
@@ -1436,7 +1445,7 @@ function NomenclaturePage({
                       <span className="recipe-name">
                         <small className="recipe-type">{recipe.category || ruProductType(recipe.type)}</small>
                         <strong>{displayText(recipe.name, "Без названия")}</strong>
-                        <span className="recipe-price"><span>{price.label}</span><b>{price.value === null ? "Нет данных" : formatPrice(price.value)}</b></span>
+                        <span className="recipe-price"><span>{recipe.pricesDeferred ? "Цены" : price.label}</span><b>{recipe.pricesDeferred ? "Подгружаем…" : price.value === null ? "Нет данных" : formatPrice(price.value)}</b></span>
                       </span>
                       <span className="chevron">
                         <Icon name="chevron" />
@@ -2019,7 +2028,7 @@ function DocumentsPage({
     );
   };
 
-  const showBody = !error && data !== null;
+  const showBody = data !== null;
 
   return (
     <>
@@ -2199,7 +2208,8 @@ function AnalyticsPage({
           ? dashboard?.reconciliation || []
           : [];
 
-  const maxStoreValue = Math.max(1, ...stores.map((item) => Math.abs(Number(item.closeValue || 0))));
+  const shares = warehouseShares(stores);
+  const metrics = inventoryMetrics(summary, isoDateLocal(period.start), isoDateLocal(period.end));
 
   return (
     <>
@@ -2216,7 +2226,7 @@ function AnalyticsPage({
 
       <WorkspaceActions warehouse={warehouse} onWarehouseChange={onWarehouseChange} />
 
-      {loading && (
+      {loading && !dashboard && (
         <div className="empty-state">
           <strong>Собираем дашборд…</strong>
           <span>ОСВ по складам может занять несколько секунд</span>
@@ -2230,7 +2240,9 @@ function AnalyticsPage({
         </div>
       )}
 
-      {dashboard && !error && (
+      {dashboard && loading && <p className="refresh-note" role="status">Обновляем показатели… Текущие данные остаются на экране.</p>}
+      {dashboard && error && <p className="refresh-note">Показаны ранее загруженные данные.</p>}
+      {dashboard && (
         <>
           <section className="analytics-kpis" aria-label="Ключевые показатели">
             <article>
@@ -2243,29 +2255,19 @@ function AnalyticsPage({
             <article>
               <span>Изменение запасов</span>
               <strong>{formatSignedMoney(summary.deltaValue)}</strong>
-              <small>по себестоимости</small>
+              <small>{metrics.changePercent === null ? "Нет базы для сравнения" : `${metrics.changePercent > 0 ? "+" : ""}${numberFormatter.format(Math.round(metrics.changePercent * 10) / 10)}% к началу периода`}</small>
             </article>
-            <article>
-              <span>Приход</span>
-              <strong>{formatMoney(Math.abs(Number(summary.incomingValue || 0)))}</strong>
-              <small>по себестоимости</small>
-            </article>
-            <article>
-              <span>Расход по продажам</span>
-              <strong>{formatMoney(Math.abs(Number(summary.salesCost || 0)))}</strong>
-              <small>это не выручка</small>
-            </article>
-            <article>
-              <span>Списания</span>
-              <strong>{formatMoney(Math.abs(Number(summary.writeoffCost || 0)))}</strong>
-              <small>по себестоимости</small>
-            </article>
+
+
+
             <article>
               <span>Проблем</span>
               <strong>{problemCount}</strong>
               <small>требуют внимания</small>
             </article>
           </section>
+
+          <InventoryInsights summary={summary} from={isoDateLocal(period.start)} to={isoDateLocal(period.end)} />
 
           {stores.length > 0 && (
             <section className="revenue-chart" aria-label="Данные по складам">
@@ -2277,36 +2279,16 @@ function AnalyticsPage({
                 <b>{formatMoney(summary.closeValue || 0)}</b>
               </div>
 
-              <div className="chart-area">
-                {stores.map((store, index) => {
-                  const width = Math.max(
-                    10,
-                    Math.min(100, (Math.abs(Number(store.closeValue || 0)) / maxStoreValue) * 100),
-                  );
-
-                  return (
-                    <div className="chart-column" key={store.name || index}>
-                      <span className={`bar-${Math.min(100, Math.max(10, Math.round(width)))}`} />
-                      <small>{store.name || "Склад"}</small>
-                    </div>
-                  );
-                })}
+              <div className="warehouse-chart" aria-label="Доли складов в положительных запасах">
+                {shares.map((store, index) => <div className="warehouse-share" key={store.name || index}>
+                  <div><strong>{store.name || "Склад"}</strong><b>{store.share === null ? "—" : numberFormatter.format(Math.round(store.share * 10) / 10) + "%"}</b></div>
+                  <div className="warehouse-share-track" role="img" aria-label={(store.name || "Склад") + ": " + formatMoney(store.closeValue)}><i style={{ width: (store.share ?? 0) + "%" }} /></div>
+                  <small>{formatMoney(store.closeValue)} · {formatSignedMoney(store.deltaValue)} за период</small>
+                  {(Number(store.negativeCount) > 0 || Number(store.ranOutCount) > 0) && <small className="warehouse-problems">{store.negativeCount || 0} отрицательных · {store.ranOutCount || 0} закончились</small>}
+                </div>)}
               </div>
+              <p className="chart-footnote">Доли рассчитаны от суммы положительных запасов складов.</p>
 
-              <div className="x-store-list">
-                {stores.map((store, index) => (
-                  <div key={`${store.name}-${index}`}>
-                    <span>
-                      <strong>{store.name || "Склад"}</strong>
-                      <small>
-                        {formatSignedMoney(store.deltaValue)} · {store.negativeCount || 0} отриц. ·{" "}
-                        {store.ranOutCount || 0} законч.
-                      </small>
-                    </span>
-                    <strong>{formatMoney(store.closeValue || 0)}</strong>
-                  </div>
-                ))}
-              </div>
             </section>
           )}
 
@@ -2362,7 +2344,7 @@ function AnalyticsPage({
                 </div>
               </div>
 
-              <div className="health-ring">
+              <div className="health-ring" style={{ background: `radial-gradient(circle,var(--surface) 57%,transparent 59%),conic-gradient(var(--positive) 0 ${healthPercent ?? 0}%,var(--border) ${healthPercent ?? 0}% 100%)` }}>
                 <strong>{healthPercent === null ? "—" : `${healthPercent}%`}</strong>
                 <span>без отрицательного остатка</span>
               </div>
@@ -2611,7 +2593,9 @@ export default function App() {
 
   // Токен, на котором данные раздела были загружены в последний раз.
   // Если он меньше текущего — это ручное обновление, и кэш воркера нужно обойти.
-  const loadedToken = useRef({ stock: 0, turnover: 0, catalog: 0, dashboard: 0 });
+  const documentsViewKey = useRef("");
+  const dashboardViewKey = useRef("");
+  const loadedToken = useRef({ stock: 0, turnover: 0, catalog: 0, dashboard: 0, documents: 0 });
   const stockWarehouse = useRef<string | null>(null);
 
   const from = isoDateLocal(period.start);
@@ -2693,11 +2677,13 @@ export default function App() {
 
     setDocumentsLoading(true);
     setDocumentsError(null);
-    setDocumentsData(null);
+    const viewKey = JSON.stringify([readStorage(AUTH_TOKEN_KEY), readStorage(CONNECTION_KEY), warehouse, from, to]);
+    if (documentsViewKey.current !== viewKey) setDocumentsData(null);
+    documentsViewKey.current = viewKey;
 
-    fetchIncomingDocuments(from, to, warehouse, { signal: controller.signal })
+    fetchIncomingDocuments(from, to, warehouse, { signal: controller.signal, forceRefresh: reloadToken > loadedToken.current.documents })
       .then((payload) => {
-        if (!controller.signal.aborted) setDocumentsData({ ...payload, documents: payload.documents || [] });
+        if (!controller.signal.aborted) { loadedToken.current.documents = reloadToken; setDocumentsData({ ...payload, documents: payload.documents || [] }); }
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setDocumentsError(errorMessage(error));
@@ -2715,7 +2701,7 @@ export default function App() {
 
     // Номенклатура не зависит от склада и периода — повторно грузим её только по кнопке «Обновить»
     const manualRefresh = reloadToken > loadedToken.current.catalog;
-    if (!manualRefresh && nomenclatureItems.length > 0) return;
+    if (!manualRefresh && nomenclatureItems.length > 0 && nomenclatureItems.every(item => !item.pricesDeferred)) return;
 
     const controller = new AbortController();
 
@@ -2727,6 +2713,13 @@ export default function App() {
         if (controller.signal.aborted) return;
         loadedToken.current.catalog = reloadToken;
         setNomenclatureItems(items);
+        if (items.some(item => item.pricesDeferred)) {
+          fetchNomenclaturePrices({ signal: controller.signal }).then(({ prices }) => {
+            if (controller.signal.aborted) return;
+            const menu = new Map(prices.menu), costs = new Map(prices.costs);
+            setNomenclatureItems(current => current.map(item => ({ ...item, pricesDeferred: false, menuPrice: menu.get(String(item.code || item.num || item.id)) ?? null, menuPriceStatus: menu.has(String(item.code || item.num || item.id)) ? "available" : "unavailable", costPrice: costs.get(String((item as NomenclatureItem & { uuid?: string }).uuid)) ?? null, priceWarning: prices.warning })));
+          }).catch(() => { if (!controller.signal.aborted) setNomenclatureItems(current => current.map(item => ({ ...item, pricesDeferred: false, priceWarning: "Не удалось загрузить цены. Повторное обновление доступно в настройках." }))); });
+        }
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setNomenclatureError(errorMessage(error));
@@ -2748,7 +2741,9 @@ export default function App() {
 
     setDashboardLoading(true);
     setDashboardError(null);
-    setDashboardData(null);
+    const viewKey = JSON.stringify([readStorage(AUTH_TOKEN_KEY), readStorage(CONNECTION_KEY), warehouse, from, to]);
+    if (dashboardViewKey.current !== viewKey) setDashboardData(null);
+    dashboardViewKey.current = viewKey;
 
     fetchDashboard(from, to, warehouse, { signal: controller.signal, forceRefresh })
       .then((payload) => {

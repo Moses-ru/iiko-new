@@ -10,7 +10,7 @@ export function createRequestCache(ttl = 30_000, maxEntries = 80) {
       cache.clear();
       pending.clear();
     },
-    async get<T>(key: string, load: () => Promise<T>, signal?: AbortSignal | null): Promise<T> {
+    async get<T>(key: string, load: () => Promise<T>, signal?: AbortSignal | null, freshness = ttl): Promise<T> {
       signal?.throwIfAborted();
       const cached = cache.get(key);
       if (cached && cached.expires > Date.now()) return cached.value as T;
@@ -21,7 +21,7 @@ export function createRequestCache(ttl = 30_000, maxEntries = 80) {
         request = load().then((value) => {
           if (generation === startedGeneration) {
             cache.delete(key);
-            cache.set(key, { value, expires: Date.now() + ttl });
+            cache.set(key, { value, expires: Date.now() + freshness });
             while (cache.size > maxEntries) cache.delete(cache.keys().next().value!);
           }
           return value;
