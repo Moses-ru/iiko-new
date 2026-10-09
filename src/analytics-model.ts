@@ -9,7 +9,7 @@ export function inventoryMetrics(summary: Record<string, number>, from: string, 
     days,
     changePercent: open !== null && open !== 0 && close !== null ? (close - open) / Math.abs(open) * 100 : null,
     turns,
-    coverageDays: turns !== null && turns > 0 ? days / turns : null,
+    coverageDays: close !== null && close >= 0 && sales !== null && Math.abs(sales) > 0 ? close / (Math.abs(sales) / days) : null,
     writeoffPercent: sales !== null && finite(summary.writeoffCost) !== null && Math.abs(sales) + Math.abs(summary.writeoffCost) > 0
       ? Math.abs(summary.writeoffCost) / (Math.abs(sales) + Math.abs(summary.writeoffCost)) * 100 : null,
   };
