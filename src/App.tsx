@@ -1289,6 +1289,14 @@ const NOMENCLATURE_FILTERS: [string, string][] = [
 
 const NOMENCLATURE_RENDER_LIMIT = 300;
 
+function LoadingState({ title, detail, compact = false }: { title: string; detail?: string; compact?: boolean }) {
+  return <div className={compact ? "loading-state loading-state--compact" : "loading-state"} role="status" aria-live="polite">
+    <div className="loading-mark" aria-hidden="true"><i /><i /><i /><i /></div>
+    <div className="loading-copy"><strong>{title}</strong>{detail && <span>{detail}</span>}</div>
+    {!compact && <div className="loading-preview" aria-hidden="true"><i /><i /><i /></div>}
+  </div>;
+}
+
 type NomenclatureDetailState = { loading?: boolean; error?: string; item?: NomenclatureItem };
 
 function NomenclaturePage({
@@ -1412,9 +1420,7 @@ function NomenclaturePage({
       </section>
 
       {loading && recipes.length === 0 && (
-        <div className="empty-state">
-          <strong>Загрузка номенклатуры…</strong>
-        </div>
+        <LoadingState title="Загружаем каталог" detail="Готовим товары и техкарты" />
       )}
 
       {error && (
@@ -1454,7 +1460,7 @@ function NomenclaturePage({
 
                     {isOpen && (
                       <div className="recipe-details">
-                        {state?.loading && <p className="recipe-status" role="status">Открываем техкарту…</p>}
+                        {state?.loading && <LoadingState compact title="Открываем техкарту…" />}
                         {state?.error && <p className="recipe-status" role="alert">Не удалось загрузить карточку: {state.error}</p>}
 
                         {state?.item && (
@@ -1770,7 +1776,7 @@ function DocumentsPage({
 
           {isOpen && (
             <div className="document-detail">
-              {state?.loading && <div className="x-note">Открываем накладную…</div>}
+              {state?.loading && <LoadingState compact title="Открываем накладную…" />}
               {state?.error && <div className="x-note">{state.error}</div>}
 
               {detail && (
@@ -1888,7 +1894,7 @@ function DocumentsPage({
   const renderPrices = () => {
     const state = prices?.key === analyticsKey ? prices : null;
 
-    if (!state || state.loading) return <div className="x-note">Собираем историю цен по накладным периода…</div>;
+    if (!state || state.loading) return <LoadingState compact title="Собираем историю цен…" />;
     if (state.error)
       return (
         <div className="empty-state" role="alert">
@@ -1961,7 +1967,7 @@ function DocumentsPage({
     const state = matrix?.key === analyticsKey ? matrix : null;
 
     if (!state || state.loading)
-      return <div className="x-note">Строим матрицу цен за последние {MATRIX_HISTORY_DAYS} дней…</div>;
+      return <LoadingState title="Строим матрицу цен" detail={`За последние ${MATRIX_HISTORY_DAYS} дней`} />;
     if (state.error)
       return (
         <div className="empty-state" role="alert">
@@ -2100,9 +2106,7 @@ function DocumentsPage({
       )}
 
       {loading && data === null && !error && tab !== "matrix" && (
-        <div className="empty-state">
-          <strong>Загружаем приходные накладные…</strong>
-        </div>
+        <LoadingState title="Загружаем документы" detail="Собираем накладные за выбранный период" />
       )}
 
       {showBody && tab === "documents" && (
@@ -2227,10 +2231,7 @@ function AnalyticsPage({
       <WorkspaceActions warehouse={warehouse} onWarehouseChange={onWarehouseChange} />
 
       {loading && !dashboard && (
-        <div className="empty-state">
-          <strong>Собираем дашборд…</strong>
-          <span>ОСВ по складам может занять несколько секунд</span>
-        </div>
+        <LoadingState title="Готовим аналитику" detail="Собираем движение и остатки по складам" />
       )}
 
       {error && (
@@ -2240,7 +2241,7 @@ function AnalyticsPage({
         </div>
       )}
 
-      {dashboard && loading && <p className="refresh-note" role="status">Обновляем показатели… Текущие данные остаются на экране.</p>}
+      {dashboard && loading && <LoadingState compact title="Обновляем показатели…" detail="Текущие данные остаются на экране" />}
       {dashboard && error && <p className="refresh-note">Показаны ранее загруженные данные.</p>}
       {dashboard && (
         <div className="analytics-content">
@@ -2898,7 +2899,8 @@ export default function App() {
               </span>
             </section>
 
-            {turnoverLoading && <div className="x-note" role="status">Загружаем движения за выбранный период…</div>}
+            {stockLoading && stockItems.length === 0 && !stockError && <LoadingState title="Загружаем остатки" detail="Проверяем запасы на складах" />}
+            {turnoverLoading && <LoadingState compact title="Загружаем движения за период…" />}
             {turnoverError && <div className="x-note" role="alert">Движения за период недоступны: {turnoverError}. Повторите загрузку кнопкой «Обновить».</div>}
 
             {stockError && (
@@ -3104,3 +3106,4 @@ export default function App() {
     </main>
   );
 }
+
