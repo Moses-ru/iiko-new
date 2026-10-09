@@ -170,3 +170,40 @@ body { background: var(--page-bg); color: var(--text); }
   .nav-settings-label { display: block; }
 }
 @media (prefers-reduced-motion:reduce) { .nav-icon-frame { transition: none; } }
+
+/* A readable input size keeps iOS from zooming the login form on focus. */
+.auth-field input { font-size: 16px; line-height: 1.5; }
+.analytics-grid > *, .analytics-kpis > *, .analytics-heading > *, .inventory-insights > * { min-width: 0; }
+.analytics-heading { flex-wrap: wrap; gap: .75rem; }
+.analytics-heading strong, .analytics-heading b { overflow-wrap: anywhere; }
+.inventory-insights { display: grid; gap: 1rem; margin-bottom: 1rem; }
+.inventory-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .75rem; }
+.inventory-metrics article { display: flex; flex-direction: column; gap: .5rem; padding: 1.25rem; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 1.1rem; min-width: 0; }
+.inventory-metrics span { color: var(--text-secondary); font-size: .8rem; }
+.inventory-metrics strong { font-size: 1.65rem; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.inventory-metrics small { color: var(--text-muted); line-height: 1.5; font-size: .75rem; }
+.movement-chart { padding: 1.25rem; border: 1px solid var(--border-soft); border-radius: 1.1rem; background: var(--surface); }
+.movement-row { margin-top: 1rem; }
+.movement-row > div:first-child, .warehouse-share > div:first-child { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; }
+.movement-row span { font-size: .8rem; color: var(--text-secondary); }
+.movement-row b { font-size: .85rem; font-weight: 600; flex: none; }
+.movement-track, .warehouse-share-track { overflow: hidden; background: var(--border-soft); height: .625rem; border-radius: 1rem; margin-top: .5rem; }
+.movement-track i, .warehouse-share-track i { display: block; height: 100%; border-radius: inherit; background: var(--positive); }
+.movement-track .sales { background: #7d9ec6; }
+.movement-track .writeoff { background: var(--negative); }
+.warehouse-chart { display: grid; gap: 1.25rem; margin-top: 1.25rem; }
+.warehouse-share strong { font-size: .875rem; font-weight: 550; overflow-wrap: anywhere; min-width: 0; }
+.warehouse-share b { font-size: .85rem; flex: none; color: var(--positive); font-variant-numeric: tabular-nums; }
+.warehouse-share small { display: block; font-size: .75rem; color: var(--text-secondary); line-height: 1.6; margin-top: .4rem; }
+.warehouse-share .warehouse-problems { color: var(--negative); margin-top: .15rem; }
+.chart-footnote, .refresh-note { font-size: .75rem; color: var(--text-muted); line-height: 1.6; margin: 1rem 0 0; }
+.refresh-note { margin: .75rem 0; }
+@media(max-width:700px) {
+  .inventory-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .625rem; }
+  .inventory-metrics article { padding: 1rem; }
+  .inventory-metrics article:last-child { grid-column: 1 / -1; }
+  .inventory-metrics strong { font-size: 1.35rem; }
+  .movement-chart { padding: 1rem; }
+  .stock-health { grid-template-columns: 1fr; }
+  .health-ring { justify-self: center; }
+}
