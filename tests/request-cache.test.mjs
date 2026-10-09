@@ -41,3 +41,12 @@ test('pre-aborted requests do not start loading', async () => {
   await assert.rejects(cache.get('a',async()=>++calls,AbortSignal.abort()),{name:'AbortError'});
   assert.equal(calls,0);
 });
+
+test('endpoint freshness can outlive the default without persisting data', async () => {
+  const cache=createRequestCache(0); let calls=0;
+  const load=async()=>++calls;
+  assert.equal(await cache.get('catalog',load,undefined,300000),1);
+  assert.equal(await cache.get('catalog',load,undefined,300000),1);
+  await cache.get('stock',load); await cache.get('stock',load);
+  assert.equal(calls,3);
+});
