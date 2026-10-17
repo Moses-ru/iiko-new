@@ -27,13 +27,22 @@ export type FolderTree<T> = {
 const EMPTY_PATH: string[] = [];
 
 /**
+ * Заглушка, которой iiko добивает путь до трёх уровней у позиций, лежащих
+ * выше третьего. Это не папка: если её оставить, «Товары» из двухуровневой
+ * ветки и «Товары» из трёхуровневой окажутся разными корнями.
+ */
+const ROOT_PLACEHOLDERS = new Set(["группа самого высокого уровня"]);
+
+const isPlaceholder = (name: string) => ROOT_PLACEHOLDERS.has(name.toLocaleLowerCase("ru-RU"));
+
+/**
  * Путь из трёх полей остатков. Пустые уровни выбрасываются, а не превращаются
  * в папку с пустым именем: у части позиций заполнен только верхний уровень.
  */
 export function stockPath(item: { group?: unknown; secondGroup?: unknown; thirdGroup?: unknown }): string[] {
   const path = [item.thirdGroup, item.secondGroup, item.group]
     .map((level) => String(level ?? "").trim())
-    .filter(Boolean);
+    .filter((level) => level && !isPlaceholder(level));
   return path.length ? path : EMPTY_PATH;
 }
 

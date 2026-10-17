@@ -106,3 +106,24 @@ test('нечисловая сумма не превращается в NaN', () 
   assert.equal(root.folders[0].value, 10);
   assert.equal(root.value, 10);
 });
+
+test('заглушка верхнего уровня не становится папкой', () => {
+  // iiko добивает путь до трёх уровней этим литералом.
+  assert.deepEqual(
+    stockPath({ group: 'Инвентарь', secondGroup: 'Товары', thirdGroup: 'Группа самого высокого уровня' }),
+    ['Товары', 'Инвентарь'],
+  );
+});
+
+test('двух- и трёхуровневые ветки сходятся в одну папку', () => {
+  const root = buildFolderTree(
+    [
+      { n: 'Инвентарь', group: 'Инвентарь', secondGroup: 'Товары', thirdGroup: 'Группа самого высокого уровня' },
+      { n: 'Вино', group: 'Вино', secondGroup: 'Алкоголь', thirdGroup: 'Товары' },
+    ],
+    stockPath,
+  );
+  assert.deepEqual(root.folders.map((folder) => folder.name), ['Товары']);
+  assert.equal(root.folders[0].count, 2);
+  assert.deepEqual(root.folders[0].children.map((folder) => folder.name), ['Алкоголь', 'Инвентарь']);
+});
