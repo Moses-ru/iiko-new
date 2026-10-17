@@ -542,3 +542,44 @@ button:disabled { cursor: default; opacity: .5; }
 }
 .x-chart-toggle:hover { color: var(--text); }
 .x-card .chart-card { box-shadow: none; border: 0; padding: .25rem 0 0; }
+
+/* Фудкост: полоса показывает долю себестоимости, засечка — целевые 30%. */
+.foodcost-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  margin-top: .65rem;
+  overflow: hidden;
+}
+.foodcost-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--positive);
+}
+.foodcost-bar i.is-over { background: var(--negative); }
+.foodcost-bar b {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 10px;
+  background: var(--text-muted);
+  transform: translateX(-1px);
+}
+
+/* ABC: группа видна до чтения цифр. */
+.abc-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-right: .5rem;
+  border-radius: .45rem;
+  font-size: .75rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.abc-A { background: var(--positive); color: var(--page-bg); }
+.abc-B { background: var(--surface-raised); color: var(--text); }
+.abc-C { background: var(--surface-raised); color: var(--text-muted); }
