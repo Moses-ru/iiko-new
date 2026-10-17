@@ -10,6 +10,7 @@ import { catalogPrice } from "./catalog-price";
 import { movementLines } from "./stock-movement";
 import { FOODCOST_TARGET, abcRows, abcSummary, foodcostRows, foodcostSummary } from "./foodcost";
 import { BarChart, PriceChart } from "./Chart";
+import { buildFolderTree, folderAt, stockPath } from "./folders";
 import { dailyTotals, fitSeries, pricePoints, type PricePoint } from "./series";
 
 type IconName =
@@ -2782,6 +2783,7 @@ export default function App() {
   const [showPrices, setShowPrices] = useState(true);
   const [compactCards, setCompactCards] = useState(false);
   const [stockMode, setStockMode] = useState<"list" | "abc">("list");
+  const [folderPath, setFolderPath] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">(() => readStorage("iiko-display-theme") === "light" ? "light" : "dark");
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -3060,6 +3062,23 @@ export default function App() {
 
   const abcGroups = useMemo(() => abcSummary(abc), [abc]);
 
+  // Дерево папок строится из полей, которые уже пришли с остатками.
+  const stockTree = useMemo(
+    () => buildFolderTree(filteredProducts, stockPath, (item) => Number(item.endSum || 0)),
+    [filteredProducts],
+  );
+
+  // Поиск ищет по всему складу, а не внутри открытой папки.
+  const searching = query.trim().length > 0;
+  const currentFolder = searching ? null : folderAt(stockTree, folderPath);
+
+  // Путь мог устареть после смены склада — возвращаемся к корню.
+  useEffect(() => {
+    if (!searching && folderPath.length && !currentFolder) setFolderPath([]);
+  }, [searching, folderPath, currentFolder]);
+
+  const folderProducts = searching || !currentFolder ? filteredProducts : currentFolder.items;
+
   const refreshData = () => {
     if (refreshing) return;
     responseCache.clear();
@@ -3154,7 +3173,7 @@ export default function App() {
                 )}
               </label>
               <span className="results-count">
-                {stockLoading ? "Обновляем…" : `${filteredProducts.length} позиций`}
+                {stockLoading ? "Обновляем…" : `${folderProducts.length} позиций`}
               </span>
             </section>
 
@@ -3247,9 +3266,50 @@ export default function App() {
               )
             )}
 
+            {!stockError && stockMode === "list" && !searching && (
+              <nav className="folder-bar" aria-label="Папки номенклатуры">
+                <button type="button" onClick={() => setFolderPath([])} disabled={!folderPath.length}>
+                  Все папки
+                </button>
+                {folderPath.map((name, index) => (
+                  <span key={`${name}-${index}`}>
+                    <i aria-hidden="true">/</i>
+                    <button
+                      type="button"
+                      onClick={() => setFolderPath(folderPath.slice(0, index + 1))}
+                      disabled={index === folderPath.length - 1}
+                    >
+                      {name}
+                    </button>
+                  </span>
+                ))}
+              </nav>
+            )}
+
+            {!stockError && stockMode === "list" && currentFolder && currentFolder.folders.length > 0 && (
+              <section className="folder-list" aria-label="Папки">
+                {currentFolder.folders.map((folder) => (
+                  <button
+                    className="folder-item"
+                    key={folder.name}
+                    type="button"
+                    onClick={() => setFolderPath(folder.path)}
+                  >
+                    <Icon name="database" />
+                    <span>
+                      <strong>{folder.name}</strong>
+                      <small>{folder.count} позиций</small>
+                    </span>
+                    {showPrices && <b>{formatMoney(folder.value)}</b>}
+                    <Icon name="chevron" />
+                  </button>
+                ))}
+              </section>
+            )}
+
             {!stockError && stockMode === "list" && (
               <section className="list" aria-label="Остатки товаров">
-                {filteredProducts.slice(0, visibleCount).map((product, index) => {
+                {folderProducts.slice(0, visibleCount).map((product, index) => {
                   const key = stockKey(product);
                   const report = turnoverIndex(product);
 
@@ -3267,14 +3327,18 @@ export default function App() {
                   );
                 })}
 
-                {filteredProducts.length > visibleCount && (
+                {folderProducts.length > visibleCount && (
                   <button
                     className="secondary-action x-more"
                     onClick={() => setVisibleCount((count) => count + STOCK_RENDER_STEP)}
                     type="button"
                   >
-                    Показать ещё ({filteredProducts.length - visibleCount})
+                    Показать ещё ({folderProducts.length - visibleCount})
                   </button>
+                )}
+
+                {!stockLoading && folderProducts.length === 0 && currentFolder && currentFolder.folders.length > 0 && (
+                  <p className="folder-note">В этой папке только вложенные папки — откройте любую.</p>
                 )}
 
                 {!stockLoading && filteredProducts.length === 0 && (
