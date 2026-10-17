@@ -36,3 +36,24 @@ export async function mapSequential<T, R>(items: readonly T[], load: (item: T) =
   }
   return results;
 }
+
+/**
+ * Запускает все загрузки сразу и отдаёт результаты в исходном порядке.
+ * Сколько из них реально полетит в сеть одновременно, решает шлюз —
+ * поэтому пиковая нагрузка на iiko не растёт, а ожидание не копится.
+ * onEach вызывается по мере готовности, чтобы показывать данные частями.
+ */
+export async function mapGated<T, R>(
+  items: readonly T[],
+  load: (item: T) => Promise<R>,
+  options: { signal?: AbortSignal; onEach?: (result: R, item: T, index: number) => void } = {},
+) {
+  options.signal?.throwIfAborted();
+  return Promise.all(
+    items.map(async (item, index) => {
+      const result = await load(item);
+      if (!options.signal?.aborted) options.onEach?.(result, item, index);
+      return result;
+    }),
+  );
+}
