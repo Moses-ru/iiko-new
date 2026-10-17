@@ -4,8 +4,10 @@ import { NavigationIcon } from "./NavigationIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./App.additions.css";
 import { createRequestCache } from "./request-cache";
-import { createRequestGate, mapSequential } from "./request-gate";
+import { createPersistentCache } from "./persistent-cache";
+import { createRequestGate, mapGated } from "./request-gate";
 import { catalogPrice } from "./catalog-price";
+import { movementLines } from "./stock-movement";
 
 type IconName =
   | "search"
@@ -313,7 +315,33 @@ function readStorage(key: string) {
 }
 
 const responseCache = createRequestCache();
+const persistentCache = createPersistentCache();
 const requestGate = createRequestGate();
+
+/**
+ * Сколько ответ считается свежим. Справочники меняются редко, поэтому живут
+ * долго: каждая секунда здесь — это запрос, который не уйдёт в iiko.
+ */
+/**
+ * Ключ для localStorage без «пробойников» кэша: принудительное обновление
+ * должно перезаписывать ту же запись, а не плодить мусорные.
+ */
+function persistenceKey(path: string) {
+  const [route, query = ""] = path.split("?");
+  const params = new URLSearchParams(query);
+  params.delete("_");
+  params.delete("refresh");
+  const rest = params.toString();
+  return rest ? `${route}?${rest}` : route;
+}
+
+function freshnessFor(path: string) {
+  if (path.startsWith("/api/nomenclature")) return 30 * 60_000;
+  if (path.startsWith("/api/documents")) return 10 * 60_000;
+  if (path.startsWith("/api/turnover")) return 10 * 60_000;
+  if (path.startsWith("/api/dashboard")) return 5 * 60_000;
+  return 60_000;
+}
 
 async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -336,8 +364,27 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<
   });
   const key = JSON.stringify([path, token, connectionId]);
   if ((init.method || "GET") !== "GET") return load();
-  const ttl = path.startsWith("/api/nomenclature") ? 5 * 60_000 : /\/api\/(dashboard|documents)/.test(path) ? 2 * 60_000 : 30_000;
-  return responseCache.get<T>(key, load, init.signal, ttl);
+
+  const ttl = freshnessFor(path);
+  const diskKey = JSON.stringify([persistenceKey(path), token, connectionId]);
+
+  // Кэш в localStorage: после перезагрузки страницы данные уже на экране,
+  // а в iiko не уходит ни одного запроса. Принудительное обновление несёт
+  // «пробойник» в адресе, поэтому сюда не попадает.
+  if (path === persistenceKey(path)) {
+    const stored = persistentCache.read<T>(diskKey);
+    if (stored !== null) return stored;
+  }
+
+  return responseCache.get<T>(
+    key,
+    () => load().then((value) => {
+      persistentCache.write(diskKey, value, ttl);
+      return value;
+    }),
+    init.signal,
+    ttl,
+  );
 }
 
 function findStore(warehouse: string) {
@@ -354,11 +401,17 @@ async function fetchLiveStockForStore(storeName: string, options: RequestOptions
   return apiFetch<StockApiResponse>(`/api/stock-live?${params.toString()}`, { signal: options.signal });
 }
 
-async function fetchLiveStockMerged(options: RequestOptions = {}): Promise<StockApiResponse> {
-  const payloads = await mapSequential(LIVE_STORES, (store) => fetchLiveStockForStore(store.name, options), options.signal);
+/**
+ * «Все склады» — это семь отдельных запросов к iiko. Шлюз всё равно пропускает
+ * их по два, но результат каждого склада показываем сразу, не дожидаясь
+ * последнего: список наполняется на глазах вместо пустого экрана на полминуты.
+ */
+async function fetchLiveStockMerged(
+  options: RequestOptions & { onPartial?: (payload: StockApiResponse) => void } = {},
+): Promise<StockApiResponse> {
   const merged = new Map<string, StockApiItem>();
 
-  for (const payload of payloads) {
+  const absorb = (payload: StockApiResponse) => {
     for (const item of payload.items || []) {
       const key = String(item.id || item.productNum || item.productName || "");
       if (!key) continue;
@@ -378,25 +431,40 @@ async function fetchLiveStockMerged(options: RequestOptions = {}): Promise<Stock
         existing.endSum = (existing.endSum ?? 0) + Number(item.endSum || 0);
       }
     }
-  }
-
-  const items = [...merged.values()].sort((a, b) =>
-    String(a.productName || "").localeCompare(String(b.productName || ""), "ru", {
-      sensitivity: "base",
-      numeric: true,
-    }),
-  );
-
-  return {
-    ok: true,
-    storeName: ALL_WAREHOUSES_LABEL,
-    time: new Date().toISOString(),
-    pagination: { total: items.length, returned: items.length },
-    items,
   };
+
+  const snapshot = (): StockApiResponse => {
+    const items = [...merged.values()].sort((a, b) =>
+      String(a.productName || "").localeCompare(String(b.productName || ""), "ru", {
+        sensitivity: "base",
+        numeric: true,
+      }),
+    );
+
+    return {
+      ok: true,
+      storeName: ALL_WAREHOUSES_LABEL,
+      time: new Date().toISOString(),
+      pagination: { total: items.length, returned: items.length },
+      items,
+    };
+  };
+
+  await mapGated(LIVE_STORES, (store) => fetchLiveStockForStore(store.name, options), {
+    signal: options.signal,
+    onEach: (payload) => {
+      absorb(payload);
+      options.onPartial?.(snapshot());
+    },
+  });
+
+  return snapshot();
 }
 
-function fetchLiveStock(warehouse: string, options: RequestOptions = {}) {
+function fetchLiveStock(
+  warehouse: string,
+  options: RequestOptions & { onPartial?: (payload: StockApiResponse) => void } = {},
+) {
   return warehouse === ALL_WAREHOUSES_LABEL
     ? fetchLiveStockMerged(options)
     : fetchLiveStockForStore(warehouse, options);
@@ -472,7 +540,11 @@ async function fetchTurnover(
   const store = findStore(warehouse);
   if (store) return fetchTurnoverForStore(store.name, from, to, options);
 
-  const payloads = await mapSequential(LIVE_STORES, (item) => fetchTurnoverForStore(item.name, from, to, options), options.signal);
+  const payloads = await mapGated(
+    LIVE_STORES,
+    (item) => fetchTurnoverForStore(item.name, from, to, options),
+    { signal: options.signal },
+  );
 
   return {
     ok: true,
@@ -513,14 +585,34 @@ function fetchIncomingBatch(ids: string[], options: RequestOptions = {}) {
   );
 }
 
-/* Детали накладных пачками по 20 штук, две пачки параллельно */
+/**
+ * Детали накладных грузятся один раз на документ и живут в общем хранилище.
+ * Аналитика цен и матрица поставщиков просят пересекающиеся наборы накладных,
+ * и без этого один и тот же документ уезжал в iiko дважды.
+ */
+const documentDetails = new Map<string, IncomingDetail>();
+
+function clearDocumentDetails() {
+  documentDetails.clear();
+}
+
+function detailId(document: IncomingDetail | { id?: string }) {
+  return String((document as { id?: string }).id || "");
+}
+
+/** Детали накладных пачками по 20 штук, две пачки параллельно */
 async function fetchDetailsInBatches(rows: { id: string }[], signal?: AbortSignal) {
-  const documents: IncomingDetail[] = [];
+  const wanted = [...new Set(rows.map((row) => String(row.id)).filter(Boolean))];
+  const missing = wanted.filter((id) => !documentDetails.has(id));
   const failed: unknown[] = [];
 
+  // Сортировка даёт одинаковые границы пачек при разных вызовах,
+  // поэтому срабатывает и кэш ответов воркера.
+  missing.sort();
+
   const chunks: string[][] = [];
-  for (let i = 0; i < rows.length; i += 20) {
-    chunks.push(rows.slice(i, i + 20).map((row) => row.id));
+  for (let i = 0; i < missing.length; i += 20) {
+    chunks.push(missing.slice(i, i + 20));
   }
 
   for (let i = 0; i < chunks.length; i += 2) {
@@ -536,10 +628,17 @@ async function fetchDetailsInBatches(rows: { id: string }[], signal?: AbortSigna
     );
 
     for (const result of results) {
-      documents.push(...(result.documents || []));
+      for (const document of result.documents || []) {
+        const id = detailId(document);
+        if (id) documentDetails.set(id, document);
+      }
       failed.push(...(result.failed || []));
     }
   }
+
+  const documents = wanted
+    .map((id) => documentDetails.get(id))
+    .filter((document): document is IncomingDetail => !!document);
 
   return { documents, failed };
 }
@@ -1161,20 +1260,6 @@ function WorkspaceActions({
   );
 }
 
-const MOVEMENT_LINES: { label: string; field: TurnoverField; absolute: boolean }[] = [
-  { label: "Приход за период", field: "purchaseQty", absolute: true },
-  { label: "Продажи за период", field: "salesQty", absolute: true },
-  { label: "Списания за период", field: "writeoffQty", absolute: true },
-  { label: "Перемещения", field: "transferQty", absolute: false },
-  { label: "Инвентаризация", field: "inventoryQty", absolute: false },
-  { label: "Производство", field: "productionQty", absolute: false },
-  { label: "Преобразование", field: "transformationQty", absolute: false },
-  { label: "Расходные накладные", field: "outgoingInvoiceQty", absolute: true },
-  { label: "Возвраты", field: "returnedQty", absolute: true },
-  { label: "Возврат прихода", field: "incomingReturnedQty", absolute: true },
-  { label: "Разборка", field: "disassembleQty", absolute: false },
-];
-
 function ProductCard({
   product,
   expanded,
@@ -1199,12 +1284,7 @@ function ProductCard({
   const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   const deltaLabel = `${deltaSign}${numberFormatter.format(Math.abs(delta))} ${product.unit}`.trim();
 
-  const movements = expanded
-    ? MOVEMENT_LINES.map((line) => {
-        const raw = Number(turnover?.[line.field] || 0);
-        return { ...line, value: line.absolute ? Math.abs(raw) : raw };
-      }).filter((line) => Math.abs(line.value) > 0.000001)
-    : [];
+  const movements = expanded ? movementLines(turnover) : { primary: [], other: null };
 
   return (
     <article className={`product-card ${expanded ? "is-expanded" : ""} ${compact ? "is-compact" : ""}`}>
@@ -1254,15 +1334,21 @@ function ProductCard({
               <b>{product.productNum}</b>
             </div>
           )}
-          {movements.map((line) => (
-            <div key={line.field}>
+          {movements.primary.map((line) => (
+            <div key={line.field} className={`movement movement-${line.tone}`}>
               <span>{line.label}</span>
-              <b>
-                {!line.absolute && line.value > 0 ? "+" : ""}
-                {formatQuantity(line.value, product.unit)}
-              </b>
+              <b>{formatQuantity(line.value, product.unit)}</b>
             </div>
           ))}
+          {movements.other && (
+            <div className="movement movement-net movement-other">
+              <span>{movements.other.label}</span>
+              <b>
+                {movements.other.value > 0 ? "+" : ""}
+                {formatQuantity(movements.other.value, product.unit)}
+              </b>
+            </div>
+          )}
           {showPrices && (
             <div>
               <span>Сумма на конец</span>
@@ -2626,7 +2712,16 @@ export default function App() {
     setStockLoading(true);
     setStockError(null);
 
-    fetchLiveStock(warehouse, { signal: controller.signal, forceRefresh })
+    fetchLiveStock(warehouse, {
+      signal: controller.signal,
+      forceRefresh,
+      // «Все склады» приходят по одному — показываем каждый сразу, не копя.
+      onPartial: (payload) => {
+        if (controller.signal.aborted) return;
+        setStockItems(payload.items || []);
+        setStockMeta({ time: payload.time, cached: false });
+      },
+    })
       .then((payload) => {
         if (controller.signal.aborted) return;
         loadedToken.current.stock = reloadToken;
@@ -2647,7 +2742,9 @@ export default function App() {
 
   /* ---------- ОСВ для карточек остатков ---------- */
   useEffect(() => {
-    if (activePage !== "stock") return;
+    // Ждём остатки: иначе два веера по семь складов делят один шлюз
+    // и список товаров появляется вдвое позже.
+    if (activePage !== "stock" || stockLoading) return;
 
     const controller = new AbortController();
     const forceRefresh = reloadToken > loadedToken.current.turnover;
@@ -2668,7 +2765,7 @@ export default function App() {
       .finally(() => { if (!controller.signal.aborted) setTurnoverLoading(false); });
 
     return () => controller.abort();
-  }, [activePage, warehouse, from, to, reloadToken]);
+  }, [activePage, warehouse, from, to, reloadToken, stockLoading]);
 
   /* ---------- Приходные накладные ---------- */
   useEffect(() => {
@@ -2815,6 +2912,8 @@ export default function App() {
   const refreshData = () => {
     if (refreshing) return;
     responseCache.clear();
+    persistentCache.clear();
+    clearDocumentDetails();
     setReloadToken((token) => token + 1);
   };
 

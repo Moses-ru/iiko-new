@@ -470,3 +470,16 @@
 button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--positive, #63c978); outline-offset: 4px; }
 button:disabled { cursor: default; opacity: .5; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+
+/* Движение товара в раскрытой карточке: приход, продажи, списания и одна
+   свёрнутая строка на всё остальное. */
+.movement b { font-variant-numeric: tabular-nums; }
+.movement-in b { color: var(--positive); }
+.movement-out b { color: var(--negative); }
+.movement-other { grid-column: 1 / -1; }
+.movement-other span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
