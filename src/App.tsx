@@ -8,6 +8,8 @@ import { createPersistentCache } from "./persistent-cache";
 import { createRequestGate, mapGated } from "./request-gate";
 import { catalogPrice } from "./catalog-price";
 import { movementLines } from "./stock-movement";
+import { BarChart, PriceChart } from "./Chart";
+import { dailyTotals, fitSeries, pricePoints, type PricePoint } from "./series";
 
 type IconName =
   | "search"
@@ -674,6 +676,8 @@ type PriceProduct = {
   lastDate: string;
   lastSupplierName: string;
   purchaseValue: number;
+  /** Точки для графика цены — строятся из тех же строк накладных. */
+  history: PricePoint[];
 };
 
 type PriceAnalytics = { products: PriceProduct[]; failed: number };
@@ -764,6 +768,7 @@ function buildPriceAnalytics(lines: PurchaseLine[], failed: number): PriceAnalyt
       lastDate: last.date,
       lastSupplierName: last.supplierName,
       purchaseValue: rows.reduce((total, row) => total + row.sum, 0),
+      history: pricePoints(rows),
     });
   }
 
@@ -1674,6 +1679,7 @@ function DocumentsPage({
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, DocumentDetailState>>({});
+  const [openPrice, setOpenPrice] = useState<string | null>(null);
   const [prices, setPrices] = useState<AsyncState<PriceAnalytics> | null>(null);
   const [matrix, setMatrix] = useState<AsyncState<SupplierMatrix> | null>(null);
   const requested = useRef({ prices: "", matrix: "" });
@@ -1764,6 +1770,9 @@ function DocumentsPage({
   );
 
   const totalSum = useMemo(() => rows.reduce((sum, doc) => sum + (Number(doc.sum) || 0), 0), [rows]);
+
+  // Ряд строится из уже загруженных накладных — в iiko не уходит ни одного запроса.
+  const purchaseSeries = useMemo(() => fitSeries(dailyTotals(rows, from, to)), [rows, from, to]);
 
   const suppliers = useMemo(() => {
     const map = new Map<string, { name: string; sum: number; count: number }>();
@@ -1922,6 +1931,13 @@ function DocumentsPage({
   };
 
   const renderOverview = () => (
+    <>
+    <BarChart
+      points={purchaseSeries.points}
+      step={purchaseSeries.step}
+      title={purchaseSeries.step === "week" ? "Закупки по неделям" : "Закупки по дням"}
+      formatValue={formatMoney}
+    />
     <section className="analytics-kpis" aria-label="Обзор закупок">
       <article>
         <span>Закупки</span>
@@ -1944,6 +1960,7 @@ function DocumentsPage({
         <small>накладных</small>
       </article>
     </section>
+    </>
   );
 
   const renderSuppliers = () =>
@@ -1999,8 +2016,10 @@ function DocumentsPage({
 
         {products.length ? (
           <div className="x-cards">
-            {products.slice(0, purchaseCount).map((product, index) => (
-              <article className="x-card" key={`${product.code}-${product.name}-${index}`}>
+            {products.slice(0, purchaseCount).map((product, index) => {
+              const priceKey = `${product.code}-${product.name}-${index}`;
+              return (
+              <article className="x-card" key={priceKey}>
                 <div className="x-card-head">
                   <strong>{product.name}</strong>
                   <small>
@@ -2034,8 +2053,25 @@ function DocumentsPage({
                     </strong>
                   </div>
                 </div>
+
+                {product.history.length > 1 && (
+                  <>
+                    <button
+                      className="x-chart-toggle"
+                      type="button"
+                      aria-expanded={openPrice === priceKey}
+                      onClick={() => setOpenPrice(openPrice === priceKey ? null : priceKey)}
+                    >
+                      {openPrice === priceKey ? "Скрыть график" : `График цены · ${product.history.length} закупок`}
+                    </button>
+                    {openPrice === priceKey && (
+                      <PriceChart points={product.history} unit={product.unit} title="Цена закупки" />
+                    )}
+                  </>
+                )}
               </article>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="empty-state">
