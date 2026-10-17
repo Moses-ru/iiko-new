@@ -3173,7 +3173,7 @@ export default function App() {
                 )}
               </label>
               <span className="results-count">
-                {stockLoading ? "Обновляем…" : `${folderProducts.length} позиций`}
+                {stockLoading ? "Обновляем…" : `${currentFolder ? currentFolder.count : filteredProducts.length} позиций`}
               </span>
             </section>
 
@@ -3199,8 +3199,8 @@ export default function App() {
                   <b>{formatTime(stockMeta?.time)}</b>
                 </div>
                 <div className="summary-end">
-                  <span>Текущий остаток</span>
-                  <strong>{formatMoney(stockTotals.endSum)}</strong>
+                  <span>{folderPath.length ? "Остаток в папке" : "Текущий остаток"}</span>
+                  <strong>{formatMoney(currentFolder ? currentFolder.value : stockTotals.endSum)}</strong>
                 </div>
               </section>
             )}
@@ -3305,6 +3305,13 @@ export default function App() {
                   </button>
                 ))}
               </section>
+            )}
+
+            {!stockError && stockMode === "list" && !searching && currentFolder
+              && currentFolder.folders.length > 0 && folderProducts.length > 0 && (
+              <p className="folder-note">
+                {folderPath.length ? "Позиции в самой папке" : "Позиции вне папок — так же, как в iikoOffice"}
+              </p>
             )}
 
             {!stockError && stockMode === "list" && (
