@@ -8,6 +8,7 @@ import { createPersistentCache } from "./persistent-cache";
 import { createRequestGate, mapGated } from "./request-gate";
 import { catalogPrice } from "./catalog-price";
 import { movementLines } from "./stock-movement";
+import { FOODCOST_TARGET, abcRows, abcSummary, foodcostRows, foodcostSummary } from "./foodcost";
 import { BarChart, PriceChart } from "./Chart";
 import { dailyTotals, fitSeries, pricePoints, type PricePoint } from "./series";
 
@@ -1407,6 +1408,7 @@ function NomenclaturePage({
   const [openId, setOpenId] = useState<string | null>(null);
   const [recipeFactor, setRecipeFactor] = useState(1);
   const [details, setDetails] = useState<Record<string, NomenclatureDetailState>>({});
+  const [mode, setMode] = useState<"catalog" | "foodcost">("catalog");
 
   // После ручного обновления карточки подгружаются заново
   useEffect(() => {
@@ -1451,6 +1453,15 @@ function NomenclaturePage({
 
   const showList = !error && !(loading && recipes.length === 0);
 
+  // Фудкост считается из тех же карточек номенклатуры, что уже на руках.
+  const foodcost = useMemo(() => {
+    const rows = foodcostRows(recipes.filter((item) => typeFilter === "all" || item.type === typeFilter));
+    const q = query.trim().toLocaleLowerCase("ru-RU");
+    return q ? rows.filter((row) => matchesText(q, row.name, row.code, row.category)) : rows;
+  }, [recipes, query, typeFilter]);
+
+  const foodcostTotals = useMemo(() => foodcostSummary(foodcost), [foodcost]);
+
   return (
     <>
       <header className="section-topbar">
@@ -1482,6 +1493,15 @@ function NomenclaturePage({
         <span className="results-count">{loading ? "Загрузка…" : `${visibleRecipes.length} позиций`}</span>
       </section>
 
+      <div className="document-tabs" role="group" aria-label="Представление каталога">
+        <button className={mode === "catalog" ? "active" : ""} onClick={() => setMode("catalog")} type="button">
+          Каталог
+        </button>
+        <button className={mode === "foodcost" ? "active" : ""} onClick={() => setMode("foodcost")} type="button">
+          Фудкост
+        </button>
+      </div>
+
       <div className="filter-chips" role="group" aria-label="Тип номенклатуры">
         {NOMENCLATURE_FILTERS.map(([value, label]) => (
           <button
@@ -1495,20 +1515,37 @@ function NomenclaturePage({
         ))}
       </div>
 
-      <section className="catalog-stats" aria-label="Сводка по номенклатуре">
-        <div>
-          <span>Всего позиций</span>
-          <strong>{recipes.length}</strong>
-        </div>
-        <div>
-          <span>Блюд</span>
-          <strong>{recipes.filter((x) => x.type === "DISH").length}</strong>
-        </div>
-        <div>
-          <span>Товаров</span>
-          <strong>{recipes.filter((x) => x.type === "GOODS").length}</strong>
-        </div>
-      </section>
+      {mode === "catalog" ? (
+        <section className="catalog-stats" aria-label="Сводка по номенклатуре">
+          <div>
+            <span>Всего позиций</span>
+            <strong>{recipes.length}</strong>
+          </div>
+          <div>
+            <span>Блюд</span>
+            <strong>{recipes.filter((x) => x.type === "DISH").length}</strong>
+          </div>
+          <div>
+            <span>Товаров</span>
+            <strong>{recipes.filter((x) => x.type === "GOODS").length}</strong>
+          </div>
+        </section>
+      ) : (
+        <section className="catalog-stats" aria-label="Сводка по фудкосту">
+          <div>
+            <span>Средний фудкост</span>
+            <strong>{foodcostTotals.average === null ? "—" : `${foodcostTotals.average.toFixed(1)}%`}</strong>
+          </div>
+          <div>
+            <span>Выше {FOODCOST_TARGET}%</span>
+            <strong className={foodcostTotals.aboveTarget ? "x-up" : ""}>{foodcostTotals.aboveTarget}</strong>
+          </div>
+          <div>
+            <span>С ценой и себестоимостью</span>
+            <strong>{foodcostTotals.count}</strong>
+          </div>
+        </section>
+      )}
 
       {loading && recipes.length === 0 && (
         <LoadingState title="Загружаем каталог" detail="Готовим товары и техкарты" />
@@ -1521,7 +1558,67 @@ function NomenclaturePage({
         </div>
       )}
 
-      {showList && (
+      {showList && mode === "foodcost" && (
+        foodcost.length ? (
+          <section className="x-cards" aria-label="Фудкост по позициям">
+            {foodcost.slice(0, catalogCount).map((row) => (
+              <article className="x-card foodcost-row" key={row.id || `${row.code}-${row.name}`}>
+                <div className="x-card-head">
+                  <strong>{row.name}</strong>
+                  <small>
+                    {row.category}
+                    {row.code ? ` · ${row.code}` : ""}
+                    {row.unit ? ` · ${row.unit}` : ""}
+                  </small>
+                </div>
+                <div className="x-card-grid">
+                  <div>
+                    <span>Фудкост</span>
+                    <strong className={row.foodcost > FOODCOST_TARGET ? "x-up" : "x-down"}>
+                      {row.foodcost.toFixed(1)}%
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Цена меню</span>
+                    <strong>{formatPrice(row.menuPrice)}</strong>
+                  </div>
+                  <div>
+                    <span>Себестоимость</span>
+                    <strong>{formatPrice(row.costPrice)}</strong>
+                  </div>
+                  <div>
+                    <span>Остаётся с порции</span>
+                    <strong>{formatPrice(row.margin)}</strong>
+                  </div>
+                </div>
+                <div
+                  className="foodcost-bar"
+                  role="img"
+                  aria-label={`Фудкост ${row.foodcost.toFixed(1)} процентов при цели ${FOODCOST_TARGET}`}
+                >
+                  <i
+                    className={row.foodcost > FOODCOST_TARGET ? "is-over" : ""}
+                    style={{ width: `${Math.min(100, row.foodcost)}%` }}
+                  />
+                  <b style={{ left: `${Math.min(100, FOODCOST_TARGET)}%` }} />
+                </div>
+              </article>
+            ))}
+            <LoadMore
+              count={catalogCount}
+              total={foodcost.length}
+              onMore={() => setCatalogCount((count) => count + NOMENCLATURE_RENDER_LIMIT)}
+            />
+          </section>
+        ) : (
+          <div className="empty-state">
+            <strong>Фудкост посчитать не из чего</strong>
+            <span>Нужны и цена меню, и себестоимость — у этих позиций есть не всё</span>
+          </div>
+        )
+      )}
+
+      {showList && mode === "catalog" && (
         <section className="recipe-list" aria-label="Номенклатура">
           {visibleRecipes.length ? (
             <>
@@ -2684,6 +2781,7 @@ export default function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [showPrices, setShowPrices] = useState(true);
   const [compactCards, setCompactCards] = useState(false);
+  const [stockMode, setStockMode] = useState<"list" | "abc">("list");
   const [theme, setTheme] = useState<"dark" | "light">(() => readStorage("iiko-display-theme") === "light" ? "light" : "dark");
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -2945,6 +3043,23 @@ export default function App() {
       byName.get(String(product.productName));
   }, [turnoverData]);
 
+  // ABC по стоимости расхода: продажи и списания из уже загруженной ОСВ.
+  const abc = useMemo(
+    () =>
+      abcRows(
+        turnoverData.map((row) => ({
+          id: String(row.id || row.code || row.name || ""),
+          code: String(row.code || ""),
+          name: String(row.name || ""),
+          unit: String(row.unit || ""),
+          value: Math.abs(Number(row.salesAmt || 0)) + Math.abs(Number(row.writeoffAmt || 0)),
+        })),
+      ),
+    [turnoverData],
+  );
+
+  const abcGroups = useMemo(() => abcSummary(abc), [abc]);
+
   const refreshData = () => {
     if (refreshing) return;
     responseCache.clear();
@@ -3014,6 +3129,15 @@ export default function App() {
 
             <WorkspaceActions warehouse={warehouse} onWarehouseChange={setWarehouse} />
 
+            <div className="document-tabs" role="group" aria-label="Представление остатков">
+              <button className={stockMode === "list" ? "active" : ""} onClick={() => setStockMode("list")} type="button">
+                Остатки
+              </button>
+              <button className={stockMode === "abc" ? "active" : ""} onClick={() => setStockMode("abc")} type="button">
+                ABC расхода
+              </button>
+            </div>
+
             <section className="toolbar" aria-label="Фильтры">
               <label className="search-field">
                 <Icon name="search" />
@@ -3062,7 +3186,68 @@ export default function App() {
               </section>
             )}
 
-            {!stockError && (
+            {!stockError && stockMode === "abc" && (
+              abc.length ? (
+                <>
+                  <section className="catalog-stats" aria-label="Группы ABC">
+                    {abcGroups.map((group) => (
+                      <div key={group.group}>
+                        <span>
+                          Группа {group.group} · {group.count}
+                        </span>
+                        <strong>{formatMoney(group.value)}</strong>
+                      </div>
+                    ))}
+                  </section>
+
+                  <section className="x-cards" aria-label="ABC по стоимости расхода">
+                    {abc
+                      .filter((row) => matchesText(query, row.name, row.code))
+                      .slice(0, visibleCount)
+                      .map((row) => (
+                        <article className="x-card abc-row" key={`${row.id}-${row.code}-${row.name}`}>
+                          <div className="x-card-head">
+                            <strong>
+                              <span className={`abc-badge abc-${row.group}`}>{row.group}</span>
+                              {row.name}
+                            </strong>
+                            <small>
+                              {row.code}
+                              {row.unit ? ` · ${row.unit}` : ""}
+                            </small>
+                          </div>
+                          <div className="x-card-grid">
+                            <div>
+                              <span>Расход за период</span>
+                              <strong>{formatMoney(row.value)}</strong>
+                            </div>
+                            <div>
+                              <span>Доля</span>
+                              <strong>{row.share.toFixed(1)}%</strong>
+                            </div>
+                            <div>
+                              <span>Накопленная</span>
+                              <strong>{row.cumulativeShare.toFixed(1)}%</strong>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    <LoadMore
+                      count={visibleCount}
+                      total={abc.length}
+                      onMore={() => setVisibleCount((count) => count + STOCK_RENDER_STEP)}
+                    />
+                  </section>
+                </>
+              ) : (
+                <div className="empty-state">
+                  <strong>Расхода за период нет</strong>
+                  <span>ABC строится по продажам и списаниям из оборотно-сальдовой ведомости</span>
+                </div>
+              )
+            )}
+
+            {!stockError && stockMode === "list" && (
               <section className="list" aria-label="Остатки товаров">
                 {filteredProducts.slice(0, visibleCount).map((product, index) => {
                   const key = stockKey(product);
